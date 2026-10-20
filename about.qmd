@@ -1,9 +1,31 @@
 ---
-title: "About"
+title: "About Me"
+image: images/sevanesaian_headshot.jpg
+toc: true
+about: 
+  template: jolla
+  image-shape: round
+  image-width: 17em
+  links:
+    - text: LinkedIn
+      href: https://www.linkedin.com/in/sevan-esaian/
+    - text: GitHub
+      href: https://github.com/SevanEsaian
+    - text: Email
+      href: mailto:esaiansevan@gmail.com
+format:
+  html:
+    css: styles.css
 ---
 
-About this site
+#### I am a statistician, data analyst, and data scientist with a background in biology, and I specialize in turning complex data into evidence that informs decisions. My research training in ecology, microbiology, genomics, epidemiology, nutrition, and public health gave me a foundation in cross-sectional and longitudinal data across very different domains. I currently serve as a Lead Biostatistician and NIH R01 Co-Investigator at the Saban Research Institute within Children’s Hospital Los Angeles, leading statistical analyses, data visualization, and data science for a multi-institution research center.
 
-```{r}
-1 + 1
-```
+#### My work spans four institutions (Children’s Hospital Los Angeles, the Keck School of Medicine at USC, UC San Diego, and Kaiser Permanente) and dozens of projects. As a statistician, I design studies and build statistical models. As a data analyst and engineer, I integrate dozens of datasets, including anthropometric, dietary, continuous glucose monitor, accelerometer, and at-home blood-sampling data, into analysis-ready form. As a data scientist, I apply machine learning to uncover patterns that traditional methods miss. My current focus is pediatric endocrinology, diabetes, and metabolism, but the same methods apply to any sensor, wearable, or longitudinal data, in health or beyond.
+
+#### Communicating clearly is central to how I work. I have a strong reputation for explaining complex findings in writing and in person to audiences ranging from clinicians and investigators to administrators and trainees. I begin every project by defining the core question and the decision it needs to support, then evaluate it from several analytical perspectives, such as a mixed-effects model alongside gradient-boosted trees (XGBoost) on longitudinal clinical data, and compare the results before drawing conclusions.
+
+#### I work in regulated research environments, where I document my code, build reproducible workflows, and submit my work for formal review. I also mentor students, postdocs, and clinicians in applying data to their work.
+
+#### Tools: R, Python, SQL, SAS · Shiny, Quarto, GitHub
+
+#### Outside of work, I enjoy running and hiking with my dog, photography, traveling, lifting weights, and following sports. Explore my projects or [get in touch](mailto:esaiansevan@gmail.com).

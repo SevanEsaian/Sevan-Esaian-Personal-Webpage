@@ -1,11 +1,27 @@
 ---
-title: "Sevan Esaian Personal Webpage"
+title: ""
+image: images/sevanesaian_headshot.jpg
+toc: true
+about: 
+  template: jolla
+  image-shape: round
+  image-width: 17em
+  links:
+    - text: LinkedIn
+      href: https://www.linkedin.com/in/sevan-esaian/
+    - text: GitHub
+      href: https://github.com/SevanEsaian
+    - text: Email
+      href: mailto:esaiansevan@gmail.com
+    - text: ORCiD
+      href: https://orcid.org/0009-0006-6473-3168
+    - text: Google Scholar
+      href: https://scholar.google.com/citations?user=8r1jAR4AAAAJ&hl=en
+format:
+  html:
+    theme: flatly
+    dark: darkly
+    css: styles.css
 ---
 
-This is a Quarto website.
-
-To learn more about Quarto websites visit <https://quarto.org/docs/websites>.
-
-```{r}
-1 + 1
-```
+#### Hello, and welcome to my portfolio. I’m Sevan Esaian, a statistician, data analyst, and data scientist who turns complex, multi-source data into insights that drive better decisions, with a current focus on improving long-term pediatric health outcomes. In the tabs above, you can browse selected projects, interactive dashboards (Shiny apps), and SQL and machine learning work across a range of disciplines.

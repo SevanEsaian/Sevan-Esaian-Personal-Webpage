@@ -1,0 +1,17 @@
+---
+title: "Interactive Dashboards"
+format:
+  html:
+    css: styles.css
+
+listing:
+  type: grid
+  grid-columns: 2
+  image-height: 220px
+  contents:
+    - title: "Pediatrics: Continuous Glucose Monitoring Data (6 - 16 years old)"
+      description: "An applied CGM analytics framework, focused on pediatric cohorts, incorporating data quality, glucotyping, clustering, and dietary insights."
+      image: images/CGM.jpeg
+      path: https://sevanesaian.shinyapps.io/cgm-explorer/
+      categories: [Shiny, CGM, Biomedical Devices, Data Quality Control, Repeated Measures]
+---

@@ -1,0 +1,10 @@
+name: cgm-explorer
+title:
+username: sevanesaian
+account: sevanesaian
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18219628
+bundleId: 12712767
+url: https://sevanesaian.shinyapps.io/cgm-explorer/
+version: 1

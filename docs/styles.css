@@ -1,1 +1,8 @@
 /* css styles */
+#quarto-document-content {
+	text-align: justify;
+}
+
+.quarto-title-block .title {
+  text-align: center;
+}

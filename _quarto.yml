@@ -4,13 +4,19 @@ project:
   # ~ additional metadata excluded for brevity ~
 
 website:
-  title: "Sevan Esaian Personal Webpage"
+  title: "Sevan Esaian, Ph.D."
   navbar:
     left:
       - href: index.qmd
         text: Home
-      - about.qmd
-
+      - href: about.qmd
+        text: About Me
+      - href: datavisualization.qmd
+        text: Data Visualizations
+      - href: resume.qmd
+        text: Resume
+      - href: cv.qmd
+        text: CV
 format:
   html:
     theme: cosmo
@@ -18,4 +24,5 @@ format:
     toc: true
 
 editor: visual
+
 

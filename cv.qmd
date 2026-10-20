@@ -1,0 +1,271 @@
+---
+title: "Sevan Esaian's Curriculum Vitae"
+format: html
+---
+
+### Current Position
+
+**Title**\
+Biostatistician II at Children's Hospital Los Angeles (CHLA)
+
+**Roles & Responsibilities**\
+Lead Biostatistician \| Statistical Consultant \| Project Lead \| Data Scientist & Analyst \| Project Manager \| Biological Researcher \| Science Communicator \| Technical Writer
+
+**Address**
+
+Children's Hospital Los Angeles, [Center for Endocrinology, Diabetes, and Metabolism](https://www.chla.org/center-endocrinology-diabetes-and-metabolism)\
+[The Saban Research Institute](https://www.chla.org/research/about-saban-research-institute), 4650 Sunset Blvd MS #84, Los Angeles, CA 90027
+
+### EDUCATION
+
+#### Degrees
+
++-----------------------------------------------+:--------------------------:+-------------:+
+| University of California, Santa Barbara\      | Ph.D. Microbial Genomics   | 2024         |
+| Dept. of Ecology, Evolution, & Marine Biology |                            |              |
++-----------------------------------------------+----------------------------+--------------+
+| University of California, Santa Barbara\      | M.Sc. Microbial Ecology    | 2022         |
+| Dept. of Ecology, Evolution, & Marine Biology |                            |              |
++-----------------------------------------------+----------------------------+--------------+
+| California State University, Los Angeles\     | M.Sc. Quantitative Ecology | 2018         |
+| Dept. of Biological Sciences                  |                            |              |
++-----------------------------------------------+----------------------------+--------------+
+| California State University, Los Angeles\     | B.Sc. Molecular Biology    | 2016         |
+| Dept. of Biological Sciences                  |                            |              |
++-----------------------------------------------+----------------------------+--------------+
+
+#### Certfications
+
++:------------------------------------------+:------------------------------:+-------------:+
+| California State University, Los Angeles\ | Geographic Information Science | 2018         |
+| Dept. of Geography                        |                                |              |
++-------------------------------------------+--------------------------------+--------------+
+
+### GRANTS, FELLOWSHIPS, AWARDS
+
+Total Awarded = \$171,500
+
++-------------------------------------------------------------+:------------------------:+-------------:+
+| University of California, Santa Barbara\                    | Graduate Student\        | 2023         |
+| \$12,000                                                    | Researcher Fellowship    |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| Engineering Biology Research Consortium (EBRC)\             | Biotechnology Externship | 2021         |
+| \$18,000                                                    |                          |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| University of California, Santa Barbara\                    | Graduate Opportunity\    | 2020         |
+| \$28,000                                                    | Fellowship               |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| Coastal Fund\                                               | Graduate Student\        | 2020         |
+| \$7,500                                                     | Research Grant           |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| Schmidt Family Foundation\                                  | Mentorship Award         | 2019         |
+| \$8,000                                                     |                          |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| National Science Foundation (NSF)\                          | Graduate Student\        | 2016         |
+| Louis Stokes Alliance for Minority Participation (LSAMP)\   | Researcher Fellowship    |              |
+| \$72,000                                                    |                          |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| California Institute for Regenerative Medicine (CIRM)\      | Stem Cell\               | 2015         |
+| \$18,000                                                    | Research Grant           |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| National Institute of Health (NIH)\                         | Undergraduate\           | 2014         |
+| Minority Biomedical Research Support\                       | Research Fellowship      |              |
+| Research Initiative for Scientific Enhancement (MBRS-RISE)\ |                          |              |
+| \$6,000                                                     |                          |              |
++-------------------------------------------------------------+--------------------------+--------------+
+| National Science Foundation (NSF)\                          | Undergraduate\           | 2013         |
+| Louis Stokes Alliance for Minority Participation (LSAMP)\   | Research Award           |              |
+| \$2,000                                                     |                          |              |
++-------------------------------------------------------------+--------------------------+--------------+
+
+### RESEARCH PUBLICATIONS
+
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 11     | Jonatan Ottino-González, Shana Adise, Miguel Ángel Rivas-Fernández, **Sevan Esaian**, Alexandra Descarpentrie, Ravi Bansal, Bradley S. Peterson, Michael I. Goran. 2026. Maternal and Childhood Weight and Brain Structure in Children: Separate and Combined Associations in a Cross-Sectional Study. Obesity. <https://doi.org/10.1002/oby.70130> |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 10     | Jonatan Ottino-González, Miguel Ángel Rivas-Fernández, **Sevan Esaian**, Michael I. Goran, Shana Adise. 2026. Longer Breastfeeding Is Associated With Healthier Body Mass Index Trajectories and Lower Risk of Overweight and Obesity in Youth Aged 9-12 Years. Pediatric Obesity. <https://doi.org/10.1111/ijpo.70082>                             |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 9      | Victoria Goldman, **Sevan Esaian**, Miguel Ángel Rivas-Fernández, Jonatan Ottino-González, Nicole Karcher, Jeffrey I. Gold, Alaina P. Vidmar, Shana Adise. 2025. Adverse Experiences, Protective Factors, and Obesity in Latinx and Hispanic Youths. JAMA Network Open. <doi:10.1001/jamanetworkopen.2025.47104>                                    |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 8      | Alexandra Descarpentrie, **Sevan Esaian**, Ben Allen, Juan Espinoza, Vishal Midya, Nathan Young, Tanya L. Alderete, Michael I. Goran. 2025. Social and Behavioral Factors Associated With Diabetes in Southern California vs the US. JAMA Network Open. <doi:10.1001/jamanetworkopen.2025.38377>                                                    |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 7      | Miguel Ángel Rivas-Fernández, Jonatan Ottino-González, **Sevan Esaian**, Victoria E. Goldman, Megan. M. Herting, Tanya L. Alderete, Shana Adise. 2025. Sex-specific Effects of Outdoor Air Pollution on Subcortical Microstructure and Weight Gain: Findings from the ABCD Study. bioRxiv. <https://doi.org/10.1101/2025.06.04.657916>              |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 6      | Jonatan Ottino González, Miguel Angel Rivas Fernández, **Sevan Esaian**, Vidya Rajagopalan, Mustapha Bouhrara, Michael I Goran, Shana Adise. 2025. Sustained breastfeeding associations with brain structure and cognition from late childhood to early adolescence. Pediatric Research. <https://doi.org/10.1038/s41390-025-04086-x>               |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 5      | **Sevan Esaian**, An Bui, Bartholomew P. DiFiore, Joseph R. Peters, Michelle Lepori-Bui, Kelsey Husted, Holly V. Moeller, and Elizabeth G. Wilbanks. 2024. Maturing giant kelp develop depth-specific microbiomes. bioRxiv. <https://doi.org/10.1101/2024.04.04.588117>                                                                             |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 4      | Christian Benitez, Michael Beland, **Sevan Esaian**, Eric M. Wood. 2024. High-resolution remotely sensed data characterizes indices of avifaunal habitat on private residential lands in a global metropolis. Ecological Indicators. <https://doi.org/10.1016/j.ecolind.2024.111900>                                                                |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 3      | Eric M. Wood, **Sevan Esaian**, Christian Benitez, Philip J. Ethington, Travis Longcore, Lars Y. Pomara. 2023. Historical racial redlining and contemporary patterns of income inequality negatively affect birds, their habitat, and people in Los Angeles, California. Ornithological Applications. <https://doi.org/10.1093/ornithapp/duad044>   |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 2      | Eric M. Wood, **Sevan Esaia**n. 2020. The importance of street trees to urban avifauna. Ecological Applications. <https://doi.org/10.1002/eap.2149>                                                                                                                                                                                                 |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 1      | Daniela Roellig, Johanna Tan-Cabugao, **Sevan Esaian**, Marianne E. Bronner. 2017. Dynamic transcriptional signature and cell fate analysis reveals plasticity of individual neural plate border cells. eLife. [https://doi.org/10.7554/eLife.21](https://doi.org/10.7554/eLife.21620)                                                              |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+### TEACHING EXPERIENCE
+
++--------------------------------------------------------+:------------------------:+-------------:+
+| Lecturer; EDS 240; Data Visualization & Communication\ | Master's Students\       | 2022 - 2024\ |
+| Required Graduate Level Course\                        | 30 students per quarter  | 2 quarters   |
+| University of California, Santa Barbara                |                          |              |
++--------------------------------------------------------+--------------------------+--------------+
+| Lecturer; EEMB 145; Terrestrial Microbiology\          | Undergraduates\          | 2020 - 2023\ |
+| Upper Division Elective\                               | 50 students per quarter  | 3 quarters   |
+| University of California, Santa Barbara                |                          |              |
++--------------------------------------------------------+--------------------------+--------------+
+| Lecturer; EEMB 131; Evolutionary Biology\              | Undergraduates\          | 2018 - 2024\ |
+| Upper Division Required\                               | 180 students per quarter | 10 quarters  |
+| University of California, Santa Barbara                |                          |              |
++--------------------------------------------------------+--------------------------+--------------+
+| Field Assistant; BIOL 4510; Ornithology\               | Undergraduates\          | 2015\        |
+| Upper Division Elective\                               | 35 students per semester | 1 semester   |
+| California State University, Los Angeles               |                          |              |
++--------------------------------------------------------+--------------------------+--------------+
+| Lab Assistant; BIOL 2030; Human Anatomy\               | Undergraduates\          | 2014\        |
+| Upper Division Required\                               | 90 students per semester | 1 semester   |
+| California State University, Los Angeles               |                          |              |
++--------------------------------------------------------+--------------------------+--------------+
+
+### MENTORSHIP
+
++------------------------------------------+---------------------------+
+| Thoai Phan (Master's Student)\           | 2026 - Present            |
+| University of California, San Diego      |                           |
++------------------------------------------+---------------------------+
+| Jomanah Baksh (Ph.D. Candidate)\         | 2024 - Present            |
+| University of Southern California        |                           |
++------------------------------------------+---------------------------+
+| Saul Mota (Master's Student)\            | 2025 - Present            |
+| University of Southern California        |                           |
++------------------------------------------+---------------------------+
+| Andy Nguyen (Undergraduate)\             | 2022 - 2024               |
+| University of California, Santa Barbara  |                           |
++------------------------------------------+---------------------------+
+| Ileana Fenwick (Undergraduate)\          | 2019                      |
+| Hampton University                       |                           |
++------------------------------------------+---------------------------+
+| Kelsey Husted (Undergraduate)\           | 2019 - 2021               |
+| University of California, Santa Barbara  |                           |
++------------------------------------------+---------------------------+
+| Justin McMichael (Undergraduate)\        | 2016 - 2018               |
+| California State University, Los Angeles |                           |
++------------------------------------------+---------------------------+
+| Carla Gonsalez (Undergraduate)\          | 2013 - 2015               |
+| California State University, Los Angeles |                           |
++------------------------------------------+---------------------------+
+
+### INVITED TALKS & CONFERENCES
+
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *American Diabetes Association, Chicago IL*\                                                                                                                                 | 2025     |
+| Glycemic response to breastmilk compared to traditional lactose based formula and corn syrup based formula using continuous glucose monitoring in infants at 6 months of age |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *Diabetes & Obesity Research Institute, University of Southern California, Keck School of Medicine, Los Angeles, CA\                                                         | 2025     |
+| *Uncovering glycemic patterns in young healthy children: a framework for exploring continuous glucose monitoring data in clinical research                                   |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *California State Polytechnic University - Pomona, Los Angeles, CA*\                                                                                                         | 2024     |
+| From embryos to ecosystems to endocrinology: a biologist's path through interdisciplinary research                                                                           |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *The RAND Corporation, Los Angeles, CA (Remote)\                                                                                                                             | 2024     |
+| *Analyzing marine microbiome community assembly and succession through the lens of metagenomics and carbohydrate metabolic potential.                                        |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *Armenian Bioinformatics Institute, Yerevan, Armenia (Remote)\                                                                                                               | 2023     |
+| *Using 16S and metagenomics to quantitatively assess marine microbiome development through the lens of carbohydrate metabolism and secondary metabolite production potential |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *Science Lecture Series, Glendale Community College, Glendale, CA*\                                                                                                          | 2021     |
+| Quantifying giant kelp associated microbiome community members                                                                                                               |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *American Ornithological Society, Lansing, MI*\                                                                                                                              | 2017     |
+| Factors affecting habitat use of birds along a socioeconomic gradient in the Los Angeles urban forest                                                                        |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *International Urban Wildlife Conference, San Diego, CA\                                                                                                                     | 2017     |
+| *Tree species preferences by migratory birds in the L.A. urban forest: implications for urban biodiversity.                                                                  |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+| *American Society for Biochemistry and Molecular Biology, San Diego, CA*\                                                                                                    | 2016     |
+| Testing for combinatorial activity of 5' and 3' MyoD binding regions in mouse Acta1 gene expression                                                                          |          |
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+
+
+### SCIENTIFIC RESEARCH EXPERIENCE & THEMES
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------:+
+| *Endocrinology, Diabetes, and Metabolism\                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 2024 - Present |
+| Children's Hospital Los Angeles*\                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |                |
+| In my current role at CHLA, I serve as the lead biostatistician on multiple longitudinal clinical studies investigating how diet influences glycemic control in adolescents, children, and infants. I integrate continuous glucose monitoring data, dietary data, and statistical modeling to evaluate metabolic outcomes. In parallel, I work as a data engineer, managing data frames for several multi-institutional clinical studies through programming and data infrastructure maintenance.                 |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+| *Microbial Genomics & Ecology\                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 2018 - 2024    |
+| University of California, Santa Barbara*\                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |                |
+| During my Ph.D., I investigated how marine biofilms develop under varying environmental conditions across ocean depths. I assessed depth-specific community formation by analyzing changes in bacterial diversity over time using 16S rRNA sequencing, amplicon sequence variants, statistical modeling, and bioinformatics. I also generated metagenome-assembled genomes (MAGs) to characterize the metabolic capacity of individual bacteria, with a focus on carbohydrate catabolism through CAZyme analysis. |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+| *Natural Product Discovery\                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 2021           |
+| Zymergen Inc. (acquired by Ginkgo Bioworks)*\                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |                |
+| As part of a bioinformatics research group, I analyzed long-read soil microbiome sequences to identify biosynthetic gene clusters with potential to produce novel, patentable secondary metabolites. I used computational approaches including metagenomic assembly, predictive metabolic software, and custom coding to characterize these clusters. This work supported downstream investigation and validation of high-value metabolites.                                                                      |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+| *Quantitative Ecology\                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 2016 - 2018    |
+| *California State University, Los Angeles\                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |                |
+| I used fieldwork, remote sensing, and statistical modeling to assess how the Los Angeles urban forest supports wildlife across socioeconomic gradients in the Los Angeles basin. I used birds as model organisms to evaluate how native and non-native street trees provide ecosystem resources to urban wildlife. Specifically, I identified which non-native trees offer resources comparable to native species and analyzed how socioeconomic factors influence urban bird diversity.                          |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+| *Developmental & Molecular Biology\                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 2015           |
+| California Institute of Technology (CalTech)*\                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |                |
+| I used plasmid cloning, bacterial transformation, immunohistochemistry, embryology, and live-cell confocal imaging targeting green fluorescent protein to investigate neural crest cell migration during chicken embryonic development. My work focused on visualizing cellular movement in vivo. Specifically, I examined how neural crest cells migrate toward developing sensory organs.                                                                                                                       |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+| *Cell & Molecular Biology\                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 2013 - 2015    |
+| California State University, Los Angeles*\                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |                |
+| I used molecular techniques including restriction enzyme digestion, plasmid cloning, bacterial transformations, transient transfections, and luciferase reporter assays to investigate actin expression in developing skeletal muscle cells. My work focused on quantifying transcriptional regulation in myoblasts. Specifically, I evaluated how MyoD influences actin expression during muscle development.                                                                                                    |                |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------+
+
+### TECHNICAL SKILLS
+
+#### Programming Languages & Code Mangement
+
++----------------------------------------------------------------------------------------+
+| R (Expert); Bash (Advanced); Python (Intermediate); SQL (Intermediate); SAS (Beginner) |
++----------------------------------------------------------------------------------------+
+| Git Version Control; Docker; Anaconda (Conda)                                          |
++----------------------------------------------------------------------------------------+
+
+#### Statistics
+
++--------------------------------------------------------------------------------------------------------------------------------------------------------+
+| *Multivariate Ordination & Distance-Based Analyses*[\                                                                                                  |
+| ]{.underline}Non-metric multidimensional scaling (NMDSR); Principal Coordinate Analysis (PCoA); Principal Component Analysis (PCA)                     |
++--------------------------------------------------------------------------------------------------------------------------------------------------------+
+| *Classic & Non-Parametric Testing\                                                                                                                     |
+| *t-test; chi-square; Analyses of Variance (ANOVA, MANOVA, PERMANOVA); mann-whitney; fisher's exact; Analyses of CoVariance (ANCOVA, MANCOVA); Wilcoxon |
++--------------------------------------------------------------------------------------------------------------------------------------------------------+
+| *Regression\                                                                                                                                           |
+| *linear; logistic; negative binomial; beta binomial; mixed-effect; regularized (LASSO)                                                                 |
++--------------------------------------------------------------------------------------------------------------------------------------------------------+
+| *Machine Learning*\                                                                                                                                    |
+| Classification / Clustering (Supervised & Unsupervised); k-means; random forest; support vector machines (SVM); XGBoost; Cox; Latent Class             |
++--------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+#### Bioinformatics
+
++-----------------------+-------------------------------------------------------------------------------------------------+
+| 16S rRNA              | Amplicon Sequence Variants (ASV); Orthogonal Taxonomic Units (OTUs); QIIME2; DADA2; SILVA; GTDB |
++-----------------------+-------------------------------------------------------------------------------------------------+
+| Metagenome Assembled\ | assembly; binning; dereplication; quality assessment; annotation                                |
+| Genomes (MAGs)        |                                                                                                 |
++-----------------------+-------------------------------------------------------------------------------------------------+
+
+#### Wet-Lab
+
++-----------------------+--------------------------------------------------------------------------------------------------------------------------+
+| DNA Sequencing        | Sanger, Illumina (MiSeq & HiSeq), Oxford Nanopore (minION);\                                                             |
+|                       | 16S rRNA; whole-genome; cosmid                                                                                           |
++-----------------------+--------------------------------------------------------------------------------------------------------------------------+
+| Cloning               | Restriction Enzyme Digestion; Plasmid / Cosmid Construction; Gel Electrophoresis; Morpholinos; High MW DNA purification; |
++-----------------------+--------------------------------------------------------------------------------------------------------------------------+
+| Cell Culture\         | C2C12 skeletal muscle; HEK293; *S. cerevisiae*;*E. coli*; Chicken embryos;\                                              |
+| Mammalian & Bacterial | Bacterial Transformation; Transient Transfections; Lentiviral Transduction;                                              |
++-----------------------+--------------------------------------------------------------------------------------------------------------------------+
+| Immunohistochemistry  | Antibody staining, fluorescent in situ hybridization (FISH); BCIP-NBT; cryosectioning;                                   |
++-----------------------+--------------------------------------------------------------------------------------------------------------------------+
+
+### OTHER SKILLS
+
+|           |                                          |
+|-----------|------------------------------------------|
+| Bilingual | English (Native) & Armenian (Proficient) |
