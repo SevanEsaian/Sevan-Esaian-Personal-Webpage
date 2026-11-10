@@ -1,22 +1,28 @@
-#dir.create("cgm-explorer-deploy")
-#file.copy(src, "cgm-explorer-deploy/app.R")
-
-#rsconnect::deployApp(appDir = "cgm-explorer-deploy",
-#                    appName = "cgm-explorer",
-#                   account = "sevanesaian",
-#                  forceUpdate = TRUE)
-
 # =============================================================================
-# Continuous Glucose Monitoring - Pediatric Population (6 - 16 years of age)
-# Tab 1: Compression Lows (Day vs. Night)
+# CGM Explorer: continuous glucose monitoring in children (ages 6 - 16)
 #
-# NOTE: All data below are SIMULATED placeholders. When you have real data,
-# replace the "SIMULATED DATA" section with your own long-format data frame
-# (one row per participant x period) using the same column names
-# (including a participant-level "bmi" column), and replace simulate_cgm()
-# with your real 14-day sensor readings (one row per reading).
+# An interactive dashboard that turns 14 days of glucose sensor readings
+# (one reading every 5 minutes) into clear, usable insights.
 #
-# PACKAGE NEEDED:  install.packages("ggiraph")
+# TABS
+#   1. Start Here       Overview of the data, a guided tour, and the color key
+#   2. Glucose Overview How groups of children compare, hour by hour
+#   3. Child Explorer   One child's full 14 days, with low episodes marked
+#   4. False Lows       Sensor-pressure false lows, and what cleaning them changes
+#   5. Models & Forecasts  Group differences over time, and short-term prediction
+#
+# DATA NOTE FOR CODE READERS
+#   The data are generated in SECTION 2 so the app runs anywhere without
+#   patient data. To use real data, replace SECTION 2 with your own objects:
+#     participants     one row per child (participant_id, group, age, sex, bmi)
+#     period_summary   one row per child x period (Day / Night)
+#     all_traces       named list of tibbles (day = 0 to 14, glucose = mg/dL)
+#
+# PACKAGES (mgcv and nlme ship with R):
+#   install.packages(c("shiny", "bslib", "dplyr", "ggplot2", "ggiraph"))
+#
+# DEPLOY
+#   rsconnect::deployApp(appDir = "cgm-explorer-deploy", appName = "cgm-explorer")
 # =============================================================================
 
 library(shiny)
@@ -24,97 +30,121 @@ library(bslib)
 library(dplyr)
 library(ggplot2)
 library(ggiraph)
+library(mgcv)
 
-# -----------------------------------------------------------------------------
-# SIMULATED DATA
-# -----------------------------------------------------------------------------
-set.seed(2026)
+
+# =============================================================================
+# SECTION 1. SETTINGS: colors, glucose ranges, fonts
+# =============================================================================
+
+# ---- Color logic: BLUE = good, RED = bad -------------------------------------
+# Glucose outside the target range is bad in BOTH directions, so every
+# out-of-range value uses a red. A dark red marks lows; lighter and stronger
+# reds mark highs. Groups use neutral colors so they never read as good or bad.
+range_levels <- c("Low", "In range", "High", "Very high")
+range_colors <- c("Low"       = "#7A1230",   # dark red
+                  "In range"  = "#2B7BBA",   # blue
+                  "High"      = "#E8736C",   # light red
+                  "Very high" = "#D62828")   # strong red
+range_details <- c("Low"       = "70 mg/dL or below",
+                   "In range"  = "71 - 139 mg/dL",
+                   "High"      = "140 - 179 mg/dL",
+                   "Very high" = "180 mg/dL and above")
 
 group_levels <- c("Type 2 Diabetes", "Prediabetes", "Healthy (No Prediabetes)")
+group_colors <- c("Type 2 Diabetes"          = "#6A3D9A",   # purple
+                  "Prediabetes"              = "#C98B00",   # gold
+                  "Healthy (No Prediabetes)" = "#5C6B7A")   # slate
+period_colors <- c("Day" = "#C98B00", "Night" = "#3D3B8E")  # gold / indigo
 
-# 100 participants total. 33 x 3 = 99, so the extra participant goes to T2D.
-n_per_group <- c(34, 33, 33)
+# ---- Fonts and sizes ---------------------------------------------------------
+plot_font    <- "Arial"
+base_font_px <- 15
+bar_label_size <- base_font_px / ggplot2::.pt * 0.85
 
-# Age ranges (years) by group
-age_ranges <- list(c(6, 16), c(6, 13), c(8, 14))
+tooltip_css <- paste0("background:white;color:#1F2937;border:1px solid #9AA5B1;",
+                      "padding:6px 10px;font-family:Arial,Helvetica,sans-serif;",
+                      "font-size:14px;border-radius:4px;")
+
+# Classify a glucose value (mg/dL) into one of the four ranges
+classify_glucose <- function(x) {
+  factor(
+    case_when(x <= 70  ~ "Low",
+              x < 140  ~ "In range",
+              x < 180  ~ "High",
+              TRUE     ~ "Very high"),
+    levels = range_levels
+  )
+}
+
+
+# =============================================================================
+# SECTION 2. DATA: 100 children, 14 days of readings each
+# =============================================================================
+
+set.seed(2026)
+
+# 100 children: 34 / 33 / 33 per group
+group_sizes <- c(34, 33, 33)
+age_ranges  <- list(c(6, 16), c(6, 13), c(8, 14))
 
 participants <- bind_rows(lapply(1:3, function(i) {
   tibble(
     group = group_levels[i],
-    age   = sample(age_ranges[[i]][1]:age_ranges[[i]][2], n_per_group[i], replace = TRUE),
-    sex   = sample(c("Female", "Male"), n_per_group[i], replace = TRUE)
+    age   = sample(age_ranges[[i]][1]:age_ranges[[i]][2], group_sizes[i], replace = TRUE),
+    sex   = sample(c("Female", "Male"), group_sizes[i], replace = TRUE)
   )
 })) %>%
   mutate(
     participant_id = sprintf("P%03d", row_number()),
-    group = factor(group, levels = group_levels),
-    # Participant-level random effects (shared by Day and Night so that each
-    # child's Day and Night values are realistically paired)
-    u_rate = rnorm(n()),
-    u_dur  = rnorm(n()),
-    u_nad  = rnorm(n()),
-    u_tbr  = rnorm(n()),
-    u_glu  = rnorm(n()),
-    u_cv   = rnorm(n())
+    group          = factor(group, levels = group_levels),
+    # Child-level random effects. Day and Night share them, so each child's
+    # two periods stay realistically paired.
+    re_events   = rnorm(n()),
+    re_duration = rnorm(n()),
+    re_nadir    = rnorm(n()),
+    re_low_pct  = rnorm(n()),
+    re_glucose  = rnorm(n()),
+    re_cv       = rnorm(n())
   )
 
-# Group-level simulation parameters (Day vs. Night means for each metric).
-# Night values differ strongly from Day values in every group, and the
-# Day/Night distributions also differ between groups.
-params <- tibble(
-  group    = factor(group_levels, levels = group_levels),
-  # compression lows per 14 days
-  ev_day   = c(3.0, 2.0, 1.5),    ev_night  = c(14, 9, 6),
-  # mean compression low duration (min)
-  dur_day  = c(18, 16, 14),       dur_night = c(45, 38, 30),
-  # nadir glucose during compression lows (mg/dL)
-  nad_day  = c(66, 67, 68),       nad_night = c(48, 53, 57),
-  # time below 70 mg/dL (%)
-  tbr_day  = c(2.0, 1.5, 1.0),    tbr_night = c(8.0, 5.5, 3.5),
-  # mean glucose (mg/dL)
-  glu_day  = c(170, 118, 99),     glu_night = c(148, 105, 89),
-  # glucose CV (%)
-  cv_day   = c(34, 27, 20),       cv_night  = c(27, 21, 16)
+# Day vs. night averages for each group (events are counts per 14 days)
+sim_params <- tibble(
+  group     = factor(group_levels, levels = group_levels),
+  ev_day    = c(3.0, 2.0, 1.5),   ev_night  = c(14, 9, 6),       # false lows
+  dur_day   = c(18, 16, 14),      dur_night = c(45, 38, 30),     # minutes
+  nad_day   = c(66, 67, 68),      nad_night = c(48, 53, 57),     # lowest mg/dL
+  tbr_day   = c(2.0, 1.5, 1.0),   tbr_night = c(8.0, 5.5, 3.5),  # % time low
+  glu_day   = c(170, 118, 99),    glu_night = c(148, 105, 89),   # mean mg/dL
+  cv_day    = c(34, 27, 20),      cv_night  = c(27, 21, 16)      # % variation
 )
 
+# One row per child for one period ("Day" or "Night")
 simulate_period <- function(df, period) {
   is_night <- period == "Night"
   df %>%
-    left_join(params, by = "group") %>%
+    left_join(sim_params, by = "group") %>%
     mutate(
       period        = period,
-      comp_events   = pmax(1, rpois(n(), (if (is_night) ev_night else ev_day) * exp(0.25 * u_rate))),
-      comp_duration = pmax(5,  (if (is_night) dur_night else dur_day) + 3 * u_dur +
+      comp_events   = pmax(1, rpois(n(), (if (is_night) ev_night else ev_day) * exp(0.25 * re_events))),
+      comp_duration = pmax(5, (if (is_night) dur_night else dur_day) + 3 * re_duration +
                              rnorm(n(), 0, if (is_night) 7 else 3.5)),
-      comp_nadir    = pmax(40, (if (is_night) nad_night else nad_day) + 3 * u_nad +
+      comp_nadir    = pmax(40, (if (is_night) nad_night else nad_day) + 3 * re_nadir +
                              rnorm(n(), 0, if (is_night) 4 else 2.5)),
-      tbr           = pmax(0.1, (if (is_night) tbr_night else tbr_day) * exp(0.15 * u_tbr) +
+      tbr           = pmax(0.1, (if (is_night) tbr_night else tbr_day) * exp(0.15 * re_low_pct) +
                              rnorm(n(), 0, if (is_night) 1.0 else 0.4)),
-      mean_glu      = pmax(60, (if (is_night) glu_night else glu_day) + 8 * u_glu +
+      mean_glu      = pmax(60, (if (is_night) glu_night else glu_day) + 8 * re_glucose +
                              rnorm(n(), 0, if (is_night) 5 else 4)),
-      cv            = pmax(8,  (if (is_night) cv_night else cv_day) + 2.5 * u_cv +
+      cv            = pmax(8, (if (is_night) cv_night else cv_day) + 2.5 * re_cv +
                              rnorm(n(), 0, if (is_night) 2.5 else 2))
     ) %>%
     select(participant_id, group, age, sex, period,
            comp_events, comp_duration, comp_nadir, tbr, mean_glu, cv)
 }
 
-cgm_data <- bind_rows(
-  simulate_period(participants, "Day"),
-  simulate_period(participants, "Night")
-) %>%
-  mutate(
-    period = factor(period, levels = c("Day", "Night")),
-    across(c(comp_duration, comp_nadir, tbr, mean_glu, cv), ~ round(.x, 1)),
-    # Fixed horizontal jitter per participant (the SAME offset for Day and Night)
-    # so that a child's Day and Night points can be connected by a line.
-    jit_x = (((as.integer(sub("P", "", participant_id)) * 0.61803398875) %% 1) - 0.5) * 0.28
-  )
-
-# ---- Simulated BMI (one value per participant) -------------------------------
-# Separate seed so the CGM data above are unaffected.
+# BMI: one value per child (separate seed keeps the data above unchanged)
 set.seed(2027)
-bmi_tbl <- participants %>%
+bmi_table <- participants %>%
   select(participant_id, group) %>%
   mutate(
     g   = as.integer(group),
@@ -124,35 +154,40 @@ bmi_tbl <- participants %>%
   ) %>%
   select(participant_id, bmi)
 
-cgm_data <- cgm_data %>% left_join(bmi_tbl, by = "participant_id")
+participants <- participants %>% left_join(bmi_table, by = "participant_id")
 
-# ---- Dropdown choices for the longitudinal CGM plot --------------------------
+# One row per child x period, with a fixed horizontal offset per child so a
+# child's Day and Night points line up and can be joined by a line
+period_summary <- bind_rows(
+  simulate_period(participants, "Day"),
+  simulate_period(participants, "Night")
+) %>%
+  mutate(
+    period = factor(period, levels = c("Day", "Night")),
+    across(c(comp_duration, comp_nadir, tbr, mean_glu, cv), ~ round(.x, 1)),
+    jitter_x = (((as.integer(sub("P", "", participant_id)) * 0.61803398875) %% 1) - 0.5) * 0.28
+  ) %>%
+  left_join(bmi_table, by = "participant_id")
+
+# Drop-down labels, e.g. "P001 · Type 2 Diabetes · age 12"
 participant_choices <- setNames(
   participants$participant_id,
-  paste0(participants$participant_id, " (", participants$group,
-         ", age ", participants$age, ")")
+  paste0(participants$participant_id, " \u00b7 ", participants$group,
+         " \u00b7 age ", participants$age)
 )
 
-# ---- Simulated 14-day CGM trace for ONE participant --------------------------
-# One reading every 5 minutes for 14 days (4,032 readings). Each child's trace
-# has a day/night glucose pattern, meal spikes, and compression lows that match
-# the number of daytime and nighttime compression lows in cgm_data. Compression
-# lows drop sharply to roughly 40 - 58 mg/dL, mostly at night.
-#
-# Group differences (readings range from about 40 to 250 mg/dL for most children):
-#   Healthy      - stable, few severe hyperglycemic readings, fewer lows < 60
-#   Prediabetes  - moderately hyperglycemic, more frequently severe, more lows
-#   Type 2       - most volatile, very frequently severely hyperglycemic, most lows
-simulate_cgm <- function(pid, n_days = 14, step_min = 5) {
-  rows      <- cgm_data %>% filter(participant_id == pid)
+# ---- One child's 14-day glucose trace -----------------------------------------
+# One reading every 5 minutes for 14 days (4,032 readings). Each trace has a
+# day/night rhythm, meal spikes, and false lows that match period_summary.
+# Groups differ in how volatile the traces are and how often readings run high.
+simulate_trace <- function(pid, n_days = 14, step_min = 5) {
+  rows      <- period_summary %>% filter(participant_id == pid)
   day_row   <- rows %>% filter(period == "Day")
   night_row <- rows %>% filter(period == "Night")
   grp       <- as.character(day_row$group)
   
-  # Fixed seed per participant so the same child always gets the same trace
-  set.seed(5000 + as.integer(sub("P", "", pid)))
+  set.seed(5000 + as.integer(sub("P", "", pid)))   # same child, same trace
   
-  # Group-specific volatility and hypoglycemia settings
   sp <- switch(grp,
                "Type 2 Diabetes" = list(amp_mult = 1.6, p_big = 0.25, big_mult = 1.4,
                                         noise_sd = 3.5, noise_ar = 0.94,
@@ -162,46 +197,42 @@ simulate_cgm <- function(pid, n_days = 14, step_min = 5) {
                                         noise_sd = 2.5, noise_ar = 0.92,
                                         nad_lo = 42, nad_hi = 58, extra_hypo = 4,
                                         night_dur_scale = 2.5, extra_dur = 120),
-               list(amp_mult = 1.3, p_big = 0.05, big_mult = 2.5,                   # Healthy
+               list(amp_mult = 1.3, p_big = 0.05, big_mult = 2.5,            # Healthy
                     noise_sd = 1.2, noise_ar = 0.90,
                     nad_lo = 52, nad_hi = 66, extra_hypo = 0,
                     night_dur_scale = 1.0, extra_dur = 0)
   )
   
-  # Child-to-child variation: some children have less variation, some more
-  vol <- exp(rnorm(1, 0, 0.25))
+  vol <- exp(rnorm(1, 0, 0.25))     # child-to-child variation
   
   t_min <- seq(0, n_days * 1440 - step_min, by = step_min)
   n     <- length(t_min)
   hour  <- (t_min %% 1440) / 60
   
-  # Smooth day/night baseline: lowest around 3 AM, highest around 3 PM
+  # Smooth day/night baseline: lowest near 3 AM, highest near 3 PM
   w        <- (1 + sin(2 * pi * (hour - 9) / 24)) / 2
   baseline <- night_row$mean_glu + (day_row$mean_glu - night_row$mean_glu) * w
   
-  # Meal spikes (breakfast, lunch, dinner) every day
+  # Meal spikes: breakfast, lunch, dinner every day
   amp_scale <- day_row$cv / 100 * day_row$mean_glu * sp$amp_mult * vol
   meals     <- c(7.5, 12.5, 18.5) * 60
   bumps     <- numeric(n)
   for (d in 0:(n_days - 1)) {
     for (m in meals) {
-      t0    <- d * 1440 + m + rnorm(1, 0, 20)
-      amp   <- amp_scale * runif(1, 0.5, 1.2)
-      if (runif(1) < sp$p_big) amp <- amp * sp$big_mult   # occasional large meal
+      t0  <- d * 1440 + m + rnorm(1, 0, 20)
+      amp <- amp_scale * runif(1, 0.5, 1.2)
+      if (runif(1) < sp$p_big) amp <- amp * sp$big_mult
       lag   <- pmax(0, t_min - t0)
       bumps <- bumps + amp * (lag / 60) * exp(1 - lag / 60) * (t_min >= t0)
     }
   }
   
-  # Random sensor noise (slow wandering; larger for prediabetes and type 2)
+  # Slowly wandering sensor noise
   noise   <- as.numeric(stats::filter(rnorm(n, 0, sp$noise_sd * vol), sp$noise_ar, method = "recursive"))
   glucose <- baseline + bumps + noise
+  glucose <- ifelse(glucose > 200, 200 + 50 * tanh((glucose - 200) / 50), glucose)  # soft cap near 250
   
-  # Softly cap very high values so readings level off near 250 mg/dL
-  glucose <- ifelse(glucose > 200, 200 + 50 * tanh((glucose - 200) / 50), glucose)
-  
-  # Compression lows: sharp drop, short plateau, quick recovery
-  # Every low lasts at least 80 minutes (so glucose stays <= 70 mg/dL for 1 hour or more)
+  # False lows: sharp drop, short plateau, quick recovery. Each lasts 80+ minutes.
   add_events <- function(glucose, k, hour_range, dur_mean, nadir_mean,
                          nad_lo = sp$nad_lo, nad_hi = sp$nad_hi,
                          dur_sd = 6, min_dur = 80) {
@@ -217,1294 +248,1447 @@ simulate_cgm <- function(pid, n_days = 14, step_min = 5) {
     }
     glucose
   }
-  glucose <- add_events(glucose, night_row$comp_events, c(22, 30),
+  glucose <- add_events(glucose, night_row$comp_events, c(22, 30),          # 10 PM - 6 AM
                         night_row$comp_duration * sp$night_dur_scale,
                         night_row$comp_nadir,
-                        dur_sd = 6 * sp$night_dur_scale)                 # 10 PM - 6 AM (prolonged for prediabetes / type 2)
-  glucose <- add_events(glucose, day_row$comp_events, c(6, 22),
-                        day_row$comp_duration, day_row$comp_nadir)       # 6 AM - 10 PM
+                        dur_sd = 6 * sp$night_dur_scale)
+  glucose <- add_events(glucose, day_row$comp_events, c(6, 22),             # 6 AM - 10 PM
+                        day_row$comp_duration, day_row$comp_nadir)
   
-  # Additional prolonged nighttime hypoglycemia (about 61 - 69 mg/dL) for prediabetes and type 2
+  # Extra long overnight lows (61 - 69 mg/dL) for prediabetes and type 2
   if (sp$extra_hypo > 0) {
     glucose <- add_events(glucose, sp$extra_hypo, c(22, 30), sp$extra_dur, 65,
                           nad_lo = 61, nad_hi = 69, dur_sd = 20)
   }
   
-  tibble(
-    day     = t_min / 1440,                                # 0 to 14
-    glucose = round(pmin(250, pmax(40, glucose)))          # mg/dL, whole numbers
-  )
+  tibble(day     = t_min / 1440,                              # 0 to 14
+         glucose = round(pmin(250, pmax(40, glucose))))       # whole mg/dL
 }
 
-# -----------------------------------------------------------------------------
-# SETTINGS
-# -----------------------------------------------------------------------------
-app_title <- "Continuous Glucose Monitoring - Pediatric Population (6 - 16 years of age)"
+all_traces <- setNames(lapply(participants$participant_id, simulate_trace),
+                       participants$participant_id)
 
-# The plot shows compression lows (events per 14 days)
-metric_label <- "Compression lows (events per 14 days)"
+# ---- One long table: every reading for every child -----------------------------
+weekday_names <- c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")   # day 1 = Monday
 
-# Colors used by the Day vs. Night distribution (box) plot
-box_fill_colors  <- c("Day" = "#FFF6C2", "Night" = "#E3D9F2")   # very light yellow / very light purple
-box_point_colors <- c("Day" = "#B8860B", "Night" = "#3B1A78")   # dark yellow / dark purple
-box_point_size   <- 3.5                                         # size of the points
-track_line_color <- "grey70"                                    # faint line connecting Day to Night
+readings <- bind_rows(lapply(names(all_traces), function(pid) {
+  tr <- all_traces[[pid]]
+  tibble(participant_id = pid, t_min = round(tr$day * 1440), glucose = tr$glucose)
+})) %>%
+  left_join(participants %>% select(participant_id, group, age, sex, bmi), by = "participant_id") %>%
+  mutate(
+    day_num  = t_min %/% 1440 + 1,
+    hour_dec = (t_min %% 1440) / 60,
+    hour     = floor(hour_dec),
+    bin      = floor(hour_dec * 4) / 4,                       # 15-minute bins
+    weekday  = factor(weekday_names[(day_num - 1) %% 7 + 1], levels = weekday_names),
+    period   = factor(ifelse(hour >= 22 | hour < 6, "Night", "Day"), levels = c("Day", "Night"))
+  ) %>%
+  select(participant_id, group, age, sex, bmi, day_num, hour_dec, hour, bin,
+         weekday, period, glucose)
 
-# ---- LONGITUDINAL CGM PLOT SETTINGS ------------------------------------------
-range_levels <- c("Hypoglycemia", "In range", "Hyperglycemia", "Severe hyperglycemia")
-range_colors <- c("Hypoglycemia"        = "#FF1493",   # bright pink
-                  "In range"            = "#2E9E5B",   # green
-                  "Hyperglycemia"       = "#F28C28",   # orange
-                  "Severe hyperglycemia" = "#B22222")  # red
-winsor_floor <- 60   # winsorizing replaces every reading below this value (mg/dL)
+# ---- Child x day x period averages (used by the statistical model) ------------
+# 100 children x 14 days x 2 periods = 2,800 rows, so the model fits in seconds.
+model_table <- readings %>%
+  group_by(participant_id, group, age, sex, bmi, day_num, period) %>%
+  summarise(mean_glu = mean(glucose),
+            sd_glu   = sd(glucose),
+            pct_low  = 100 * mean(glucose <= 70),
+            .groups = "drop") %>%
+  mutate(
+    night    = period,                                        # factor: Day, Night
+    time_idx = 2 * (day_num - 1) + as.integer(period == "Night"),
+    weekend  = factor(ifelse((day_num - 1) %% 7 >= 5, "Weekend", "Weekday"),
+                      levels = c("Weekday", "Weekend")),
+    sex            = factor(sex, levels = c("Female", "Male")),
+    participant_id = factor(participant_id)
+  ) %>%
+  arrange(participant_id, time_idx) %>%
+  as.data.frame()
 
-# Hypoglycemia: 70 or below | In range: 71-139 | Hyperglycemia: 140-179 | Severe: 180+
-classify_glucose <- function(x) {
-  factor(
-    case_when(
-      x <= 70  ~ "Hypoglycemia",
-      x < 140  ~ "In range",
-      x < 180  ~ "Hyperglycemia",
-      TRUE     ~ "Severe hyperglycemia"
-    ),
-    levels = range_levels
-  )
+
+# =============================================================================
+# SECTION 3. HELPER FUNCTIONS: formatting, summaries, glucose measures
+# =============================================================================
+
+# 7.75 -> "7:45 AM"
+format_clock <- function(h) {
+  hh  <- floor(h)
+  mm  <- round((h - hh) * 60)
+  h12 <- ifelse(hh %% 12 == 0, 12, hh %% 12)
+  paste0(h12, ":", sprintf("%02d", mm), " ", ifelse(hh < 12, "AM", "PM"))
 }
 
-# Toggle switch whose label is color-coded to match the line colors
-range_switch <- function(id, name, detail, col) {
-  input_switch(
-    id,
-    label = span(span(name, style = paste0("color:", col, "; font-weight:bold;")),
-                 " ", detail),
-    value = TRUE
-  )
+clock_breaks <- list(breaks = c(0, 6, 12, 18, 24),
+                     labels = c("12 AM", "6 AM", "12 PM", "6 PM", "12 AM"))
+
+# One row per child from any slice of `readings`
+child_summary <- function(d) {
+  d %>%
+    group_by(participant_id, group) %>%
+    summarise(mean_glu  = mean(glucose),
+              sd_glu    = sd(glucose),
+              pct_low   = 100 * mean(glucose <= 70),
+              pct_low54 = 100 * mean(glucose < 54),
+              pct_inr   = 100 * mean(glucose > 70 & glucose < 140),
+              pct_high  = 100 * mean(glucose >= 140 & glucose < 180),
+              pct_vhigh = 100 * mean(glucose >= 180),
+              .groups = "drop") %>%
+    mutate(cv        = 100 * sd_glu / mean_glu,
+           gmi       = 3.31 + 0.02392 * mean_glu,
+           pct_above = pct_high + pct_vhigh)
 }
 
-# ---- CGM-DERIVED METRICS: RAW vs. WINSORIZED (plot 3) -------------------------
-group_colors  <- c("Type 2 Diabetes"          = "#0072B2",
-                   "Prediabetes"              = "#E69F00",
-                   "Healthy (No Prediabetes)" = "#009E73")
-metric_levels <- c("HbA1c (GMI, %)", "MAGE (mg/dL)", "J-index", "ADRR")
-
-# MAGE: mean amplitude of glycemic excursions. Averages every glucose swing
-# (peak-to-nadir or nadir-to-peak) that is larger than 1 SD of the trace.
+# Mean amplitude of glycemic excursions (MAGE): the average size of every
+# glucose swing larger than 1 standard deviation of the trace
 mage <- function(x) {
   s <- sd(x)
   if (!is.finite(s) || s == 0) return(NA_real_)
-  amps  <- numeric(0)
-  dir   <- 0                       # 0 = undecided, 1 = rising, -1 = falling
-  lo    <- x[1]
-  hi    <- x[1]
-  pivot <- x[1]
-  cand  <- x[1]
+  amps <- numeric(0)
+  dir <- 0                      # 0 = undecided, 1 = rising, -1 = falling
+  lo <- x[1]; hi <- x[1]; pivot <- x[1]; cand <- x[1]
   for (v in x[-1]) {
     if (dir == 0) {
-      lo <- min(lo, v)
-      hi <- max(hi, v)
-      if (v - lo >= s) {
-        dir <- 1;  pivot <- lo; cand <- v
-      } else if (hi - v >= s) {
-        dir <- -1; pivot <- hi; cand <- v
-      }
+      lo <- min(lo, v); hi <- max(hi, v)
+      if (v - lo >= s)      { dir <- 1;  pivot <- lo; cand <- v }
+      else if (hi - v >= s) { dir <- -1; pivot <- hi; cand <- v }
     } else if (dir == 1) {
-      if (v > cand) {
-        cand <- v
-      } else if (cand - v >= s) {
-        amps <- c(amps, cand - pivot); pivot <- cand; dir <- -1; cand <- v
-      }
+      if (v > cand) cand <- v
+      else if (cand - v >= s) { amps <- c(amps, cand - pivot); pivot <- cand; dir <- -1; cand <- v }
     } else {
-      if (v < cand) {
-        cand <- v
-      } else if (v - cand >= s) {
-        amps <- c(amps, pivot - cand); pivot <- cand; dir <- 1; cand <- v
-      }
+      if (v < cand) cand <- v
+      else if (v - cand >= s) { amps <- c(amps, pivot - cand); pivot <- cand; dir <- 1; cand <- v }
     }
   }
   if (length(amps) == 0) NA_real_ else mean(amps)
 }
 
-# The four CGM-derived metrics for one glucose trace (mg/dL)
-#   HbA1c (GMI) = 3.31 + 0.02392 x mean glucose
-#   J-index     = 0.001 x (mean + SD)^2
-#   ADRR        = average over days of (max daily low-risk + max daily high-risk)
-calc_metrics <- function(g, day_index) {
+# The four summary measures used in the False Lows tab, for one glucose trace
+#   GMI     = 3.31 + 0.02392 x mean glucose
+#   J-index = 0.001 x (mean + SD)^2
+#   ADRR    = average over days of (largest daily low risk + largest daily high risk)
+summary_measure_names <- c("HbA1c estimate (GMI, %)", "Big swings (MAGE, mg/dL)",
+                           "Level + swings (J-index)", "Risk of lows and highs (ADRR)")
+
+calc_measures <- function(g, day_index) {
   m  <- mean(g)
   s  <- sd(g)
   f  <- 1.509 * (log(g)^1.084 - 5.381)
   r  <- 10 * f^2
   lr <- tapply(ifelse(f < 0, r, 0), day_index, max)
   hr <- tapply(ifelse(f > 0, r, 0), day_index, max)
-  c(3.31 + 0.02392 * m,
-    mage(g),
-    0.001 * (m + s)^2,
-    mean(lr + hr))
+  c(3.31 + 0.02392 * m, mage(g), 0.001 * (m + s)^2, mean(lr + hr))
 }
 
-# Lin's concordance correlation coefficient
-lin_ccc <- function(x, y) {
-  mx <- mean(x); my <- mean(y)
-  2 * mean((x - mx) * (y - my)) / (mean((x - mx)^2) + mean((y - my)^2) + (mx - my)^2)
+# Find low episodes: 15+ minutes (3 readings) in a row at or below `thr`
+detect_episodes <- function(g, thr = 70, min_len = 3) {
+  r    <- rle(g <= thr)
+  ends <- cumsum(r$lengths)
+  strt <- ends - r$lengths + 1
+  keep <- r$values & r$lengths >= min_len
+  if (!any(keep)) return(NULL)
+  s <- strt[keep]
+  e <- ends[keep]
+  tibble(start = s, end = e, minutes = (e - s + 1) * 5,
+         lowest = vapply(seq_along(s), function(i) min(g[s[i]:e[i]]), numeric(1)))
 }
 
-# All 14-day traces (computed once when the app starts)
-all_traces <- setNames(lapply(participants$participant_id, simulate_cgm),
-                       participants$participant_id)
+# Measures a user can pick in the Glucose Overview tab
+overview_measure_choices <- c("Time in range, % (71 - 139 mg/dL)" = "pct_inr",
+                              "Time low, % (70 or below)"         = "pct_low",
+                              "Time below 54 mg/dL, %"            = "pct_low54",
+                              "Time high, % (140 and above)"      = "pct_above",
+                              "Average glucose (mg/dL)"           = "mean_glu",
+                              "Glucose variation, CV (%)"         = "cv",
+                              "Estimated HbA1c (GMI, %)"          = "gmi")
 
-# One row per participant x metric; floor_val = NULL gives the raw (not winsorized) values
-metric_tbl <- function(floor_val = NULL) {
-  bind_rows(lapply(names(all_traces), function(pid) {
-    tr <- all_traces[[pid]]
-    g  <- if (is.null(floor_val)) tr$glucose else pmax(tr$glucose, floor_val)
-    tibble(participant_id = pid,
-           metric = metric_levels,
-           value  = unname(calc_metrics(g, floor(tr$day))))
-  }))
+# Raise every reading below `floor_val` up to `floor_val` ("clean" false lows)
+clean_readings <- function(g, floor_val = NULL) {
+  if (is.null(floor_val)) g else pmax(g, floor_val)
 }
-raw_metrics <- metric_tbl() %>% rename(raw = value)
 
-# Paired comparison of winsorized vs. raw values (percent change per child),
-# with a 95% CI, a TOST p-value, and Lin's CCC. A metric is called equivalent
-# when its 95% CI lies entirely inside the +/- margin (a conservative TOST).
-eq_summary <- function(d, margin, by_group) {
+# ---- Measures before vs. after cleaning (cached per cutoff) --------------------
+measures_cache <- new.env()
+measures_for <- function(floor_val = NULL) {
+  key <- if (is.null(floor_val)) "raw" else as.character(floor_val)
+  if (is.null(measures_cache[[key]])) {
+    measures_cache[[key]] <- bind_rows(lapply(names(all_traces), function(pid) {
+      tr <- all_traces[[pid]]
+      tibble(participant_id = pid,
+             measure = summary_measure_names,
+             value   = unname(calc_measures(clean_readings(tr$glucose, floor_val), floor(tr$day))))
+    }))
+  }
+  measures_cache[[key]]
+}
+invisible(measures_for(NULL))   # ready when the app starts
+
+# Average % change per measure, with a 95% interval and a plain verdict.
+# A measure counts as "unchanged" when its whole interval sits inside +/- margin.
+summarise_change <- function(d, margin, by_group) {
   d <- if (by_group) mutate(d, grp = group) else mutate(d, grp = factor("All selected groups"))
   d %>%
-    group_by(metric, grp) %>%
-    summarise(n = n(),
-              raw_mean  = mean(raw),
-              wins_mean = mean(wins),
-              diff_mean = mean(wins - raw),
-              pct_mean  = mean(pct),
-              pct_sd    = sd(pct),
-              ccc       = lin_ccc(raw, wins),
-              .groups = "drop") %>%
+    group_by(measure, grp) %>%
+    summarise(n = n(), pct_mean = mean(pct), pct_sd = sd(pct), .groups = "drop") %>%
     filter(n >= 2) %>%
-    mutate(se     = pct_sd / sqrt(n),
-           tcrit  = qt(0.975, n - 1),
-           lo     = pct_mean - tcrit * se,
-           hi     = pct_mean + tcrit * se,
-           p_tost = pmax(1 - pt((pct_mean + margin) / se, n - 1),
-                         pt((pct_mean - margin) / se, n - 1)),
-           equivalent = lo > -margin & hi < margin)
+    mutate(se    = pct_sd / sqrt(n),
+           tcrit = qt(0.975, n - 1),
+           lo    = pct_mean - tcrit * se,
+           hi    = pct_mean + tcrit * se,
+           unchanged = lo > -margin & hi < margin)
 }
 
-# =============================================================================
-# TAB 2 HELPERS: PCA + CLUSTERING OF CGM-DERIVED MEASURES   (added section)
-# =============================================================================
+# ---- Forecasting helpers --------------------------------------------------------
+forecast_methods <- c(persist = "Repeat latest reading",
+                      trend   = "Continue recent slope",
+                      ar      = "Regression model")
+forecast_colors  <- c("Actual" = "black",
+                      "Repeat latest reading" = "#C98B00",
+                      "Continue recent slope" = "#5C6B7A",
+                      "Regression model"      = "#2B7BBA")
 
-# The ten measures fed into PCA (one value per child)
-#   mean_glu = mean glucose            sd_glu = standard deviation
-#   cv       = coefficient of variation (SD / mean, %)
-#   tir      = % time in range (71 - 139 mg/dL, same definition as the line plot)
-#   tbr      = % time below range (70 mg/dL or below)
-#   tar      = % time above range (140 mg/dL or above)
-#   gmi, mage, jindex, adrr = same four measures as the winsorizing section
-pc_feature_cols <- c("mean_glu", "sd_glu", "cv", "tir", "tbr", "tar",
-                     "gmi", "mage", "jindex", "adrr")
-
-# Cluster colors (kept separate from the group colors so the two are not confused)
-cluster_colors <- c("#56B4E9", "#CC79A7", "#D55E00", "#666666")
-
-# Point SHAPE shows the child's true group on the cluster map
-group_shapes <- c("Type 2 Diabetes"          = 16,   # circle
-                  "Prediabetes"              = 17,   # triangle
-                  "Healthy (No Prediabetes)" = 15)   # square
-
-pc_highlight_color <- "#3B1A78"   # highlight for the selected component / k
-pc_tip_css <- "background:white;color:black;border:1px solid #666;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;border-radius:4px;"
-
-# Participant-level info used for hover text (age, BMI)
-part_info <- participants %>%
-  select(participant_id, group, age, sex) %>%
-  left_join(bmi_tbl, by = "participant_id")
-
-# Traces used ONLY by the Glucotypes tab. Real children do not fall neatly into
-# three boxes, so about a fifth of the simulated children are partly blended with a
-# child from the NEIGHBORING group (Healthy <-> Prediabetes <-> Type 2), which
-# creates overlap between Glucotypes 1 & 2 and 2 & 3. Tab 1 is not affected.
-#   cross_prob = share of children who cross over | w = how strongly they borrow
-#   from the neighboring child (0 = none, 1 = fully the neighbor)
-glucotype_traces <- local({
-  set.seed(2028)
-  cross_prob_edges <- 0.22     # Healthy and Type 2 children
-  cross_prob_mid   <- 0.30     # Prediabetes children (can go either way)
-  w_range          <- c(0.45, 0.80)
-  ids <- names(all_traces)
-  grp <- as.character(part_info$group[match(ids, part_info$participant_id)])
-  pool <- function(g) ids[grp == g]
-  out <- all_traces
-  for (i in seq_along(ids)) {
-    partner <- NULL
-    r <- runif(1)
-    if (grp[i] %in% c("Healthy (No Prediabetes)", "Type 2 Diabetes") && r < cross_prob_edges) {
-      partner <- sample(pool("Prediabetes"), 1)
-    } else if (grp[i] == "Prediabetes" && r < cross_prob_mid) {
-      partner <- sample(pool(if (runif(1) < 0.5) "Healthy (No Prediabetes)" else "Type 2 Diabetes"), 1)
-    }
-    if (!is.null(partner)) {
-      w <- runif(1, w_range[1], w_range[2])
-      out[[i]]$glucose <- round(pmin(250, pmax(40,
-                                               (1 - w) * all_traces[[i]]$glucose + w * all_traces[[partner]]$glucose)))
-    }
+# Forecast `h` readings ahead (h x 5 minutes) for one child. Each model trains
+# only on days BEFORE its test block, so it never sees the future:
+#   train days 1-8 -> test 9-10 | train 1-10 -> test 11-12 | train 1-12 -> test 13-14
+run_forecast <- function(tr, h, floor_val = NULL, test_starts = c(9, 11, 13)) {
+  g <- clean_readings(tr$glucose, floor_val)
+  n <- length(g)
+  hour <- (((seq_len(n) - 1) * 5) %% 1440) / 60
+  lag_by  <- function(k) c(rep(NA_real_, k), g[seq_len(n - k)])
+  lead_by <- function(k) c(g[(k + 1):n], rep(NA_real_, k))
+  
+  d <- data.frame(
+    t = seq_len(n), day = floor(tr$day) + 1, actual = lead_by(h),
+    g0 = g, l1 = lag_by(1), l2 = lag_by(2), l3 = lag_by(3), l6 = lag_by(6), l12 = lag_by(12),
+    s1 = sin(2 * pi * hour / 24), c1 = cos(2 * pi * hour / 24),
+    s2 = sin(4 * pi * hour / 24), c2 = cos(4 * pi * hour / 24)
+  )
+  d$persist <- d$g0
+  d$trend   <- d$g0 + 0.5 * (d$g0 - d$l3) / 3 * h
+  d$xh      <- ((d$t + h - 1) * 5) / 60 - (d$day - 1) * 24    # clock time being predicted
+  
+  out <- vector("list", length(test_starts))
+  for (k in seq_along(test_starts)) {
+    ts           <- test_starts[k]
+    first_test_t <- min(d$t[d$day == ts])
+    train <- d[d$t + h < first_test_t & complete.cases(d), ]
+    test  <- d[d$day %in% c(ts, ts + 1) & !is.na(d$actual) & !is.na(d$l12), ]
+    fit   <- lm(actual ~ g0 + l1 + l2 + l3 + l6 + l12 + s1 + c1 + s2 + c2, data = train)
+    test$ar    <- as.numeric(predict(fit, test))
+    test$sigma <- summary(fit)$sigma
+    test$fold  <- paste0("Test days ", ts, "-", ts + 1)
+    out[[k]] <- test
   }
-  out
+  bind_rows(out)
+}
+
+# One row per forecast x method
+forecasts_long <- function(p) {
+  bind_rows(lapply(names(forecast_methods), function(m) {
+    tibble(fold = p$fold, day = p$day, xh = p$xh, actual = p$actual,
+           method = forecast_methods[[m]], pred = p[[m]])
+  }))
+}
+
+forecast_accuracy <- function(lp) {
+  lp %>%
+    group_by(Method = method) %>%
+    summarise(`Typical error (mg/dL)` = sqrt(mean((pred - actual)^2)),
+              `Average error (mg/dL)` = mean(abs(pred - actual)),
+              `Average error (%)`     = 100 * mean(abs(pred - actual) / actual),
+              `Forecasts close enough (%)` =
+                100 * mean(ifelse(actual <= 100, abs(pred - actual) <= 15,
+                                  abs(pred - actual) / actual <= 0.15)),
+              .groups = "drop") %>%
+    mutate(Method = factor(Method, levels = unname(forecast_methods))) %>%
+    arrange(Method) %>%
+    mutate(Method = as.character(Method))
+}
+
+# ROC curve and area under it (higher score = more likely a low)
+roc_curve <- function(score, y) {
+  thr <- sort(unique(score), decreasing = TRUE)
+  tpr <- c(0, vapply(thr, function(t) mean(score[y] >= t), numeric(1)), 1)
+  fpr <- c(0, vapply(thr, function(t) mean(score[!y] >= t), numeric(1)), 1)
+  list(df = tibble(fpr = fpr, tpr = tpr),
+       auc = sum(diff(fpr) * (head(tpr, -1) + tail(tpr, -1)) / 2))
+}
+
+# ---- Model helpers -----------------------------------------------------------
+model_outcomes <- c("Average glucose (mg/dL)"     = "mean_glu",
+                    "Glucose variation, SD (mg/dL)" = "sd_glu",
+                    "Time below 70 mg/dL (%)"     = "pct_low")
+
+model_predictors <- c("Group"                    = "group",
+                      "Night vs. day"            = "night",
+                      "Weekend vs. weekday"      = "weekend",
+                      "Day of monitoring"        = "day_num",
+                      "Age"                      = "age",
+                      "Body mass index"          = "bmi",
+                      "Sex"                      = "sex",
+                      "Group \u00d7 Night"       = "grp_night")
+
+clean_term_label <- function(x) {
+  map <- c("groupPrediabetes"                         = "Prediabetes (vs. Type 2)",
+           "groupHealthy (No Prediabetes)"            = "Healthy (vs. Type 2)",
+           "nightNight"                               = "Night (vs. day)",
+           "weekendWeekend"                           = "Weekend (vs. weekday)",
+           "day_num"                                  = "Each extra day of monitoring",
+           "age"                                      = "Each extra year of age",
+           "bmi"                                      = "Each extra BMI point",
+           "sexMale"                                  = "Male (vs. female)",
+           "groupPrediabetes:nightNight"              = "Prediabetes \u00d7 Night",
+           "groupHealthy (No Prediabetes):nightNight" = "Healthy \u00d7 Night")
+  ifelse(x %in% names(map), unname(map[x]), x)
+}
+
+
+# =============================================================================
+# SECTION 4. PLOT HELPERS
+# =============================================================================
+
+theme_dashboard <- function() {
+  theme_minimal(base_size = base_font_px, base_family = plot_font) +
+    theme(
+      legend.position    = "none",
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey90"),
+      axis.title         = element_text(color = "grey30"),
+      strip.text         = element_text(face = "bold"),
+      plot.margin        = margin(8, 12, 8, 8)
+    )
+}
+
+# Legend on top, no title (used by most charts)
+legend_top <- function(rows = 1) {
+  list(theme(legend.position = "top", legend.title = element_blank(),
+             legend.text = element_text(size = base_font_px)),
+       guides(color = guide_legend(nrow = rows), fill = guide_legend(nrow = rows)))
+}
+
+# ggiraph wrapper: hover highlights one item and fades the rest
+make_girafe <- function(p, w, h, fade = 0.2) {
+  girafe(
+    ggobj = p, width_svg = w, height_svg = h,
+    options = list(
+      opts_hover(css = "stroke:black;stroke-width:2px;fill-opacity:1;stroke-opacity:1;"),
+      opts_hover_inv(css = paste0("opacity:", fade, ";")),
+      opts_tooltip(css = tooltip_css),
+      opts_toolbar(saveaspng = FALSE),
+      opts_sizing(rescale = TRUE)
+    )
+  )
+}
+
+# Fill scale for mean glucose: dark red (low) -> blue (in range) -> reds (high)
+glucose_fill_scale <- function(name) {
+  scale_fill_gradientn(
+    name = name,
+    colours = unname(range_colors[c("Low", "In range", "High", "Very high")]),
+    values  = c(0, 0.25, 0.5, 1),                # 50, 100, 150, 250 mg/dL
+    limits  = c(50, 250), oob = scales::squish
+  )
+}
+
+# Stacked bars: average % of time in each range, one bar per group
+plot_range_bars <- function(cs) {
+  r <- cs %>%
+    group_by(group) %>%
+    summarise(Low = mean(pct_low), `In range` = mean(pct_inr),
+              High = mean(pct_high), `Very high` = mean(pct_vhigh),
+              .groups = "drop")
+  long <- bind_rows(lapply(range_levels, function(l) {
+    tibble(group = r$group, range = l, pct = r[[l]])
+  })) %>%
+    mutate(range = factor(range, levels = rev(range_levels)),
+           tip   = paste0("<b>", group, "</b><br/>", range, " (", range_details[as.character(range)],
+                          "): ", sprintf("%.1f", pct), "% of the time"),
+           lab   = ifelse(pct >= 4, paste0(round(pct), "%"), ""))
+  
+  p <- ggplot(long, aes(x = pct, y = group, fill = range)) +
+    geom_col_interactive(aes(tooltip = tip, data_id = paste(group, range)),
+                         width = 0.65, color = "white") +
+    geom_text(aes(label = lab, group = range), position = position_stack(vjust = 0.5),
+              color = "white", fontface = "bold", size = bar_label_size, family = plot_font) +
+    scale_fill_manual(values = range_colors, breaks = range_levels, drop = FALSE) +
+    scale_y_discrete(labels = scales::label_wrap(16)) +
+    scale_x_continuous(limits = c(0, 100)) +
+    labs(x = "Average % of time", y = NULL) +
+    theme_dashboard() + legend_top(2)
+  make_girafe(p, 7, 5.5)
+}
+
+# Box plot per group with one hoverable dot per child
+plot_box_by_group <- function(df, values, ylab, width = 7, height = 5.5) {
+  df$value <- values
+  df$tip <- paste0("<b>", df$participant_id, "</b><br/>", df$group, "<br/>",
+                   ylab, ": ", sprintf("%.1f", df$value))
+  p <- ggplot(df, aes(x = group, y = value)) +
+    geom_boxplot(aes(fill = group, color = group), alpha = 0.25,
+                 outlier.shape = NA, width = 0.55, linewidth = 0.8) +
+    geom_point_interactive(aes(color = group, tooltip = tip, data_id = participant_id),
+                           position = position_jitter(width = 0.15, height = 0, seed = 7),
+                           size = 3, alpha = 0.85) +
+    scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors) +
+    scale_x_discrete(labels = scales::label_wrap(14)) +
+    labs(x = NULL, y = ylab) +
+    theme_dashboard()
+  make_girafe(p, width, height, fade = 0.15)
+}
+
+# Small colored chip used in the color key
+range_chip <- function(level) {
+  span(class = "range-chip", style = paste0("background:", range_colors[[level]], ";"),
+       level, span(class = "range-chip-detail", range_details[[level]]))
+}
+
+# Two-line intro shown at the top of each tab
+tab_intro <- function(shows, notice) {
+  div(class = "tab-intro",
+      p(tags$b("What this shows: "), shows),
+      p(tags$b("What to notice: "), notice))
+}
+
+# Checkbox labels colored like the chart lines
+range_choice_names <- lapply(range_levels, function(l) {
+  span(span(l, style = paste0("color:", range_colors[[l]], ";font-weight:bold;")),
+       " ", range_details[[l]])
 })
 
-# Builds, for one set of readings (raw or winsorized at floor_val), the ten
-# per-child measures, the % of time in each of the four ranges, and each
-# child's average glucose for every hour of the day.
-pc_build <- function(floor_val = NULL) {
-  ids  <- names(glucotype_traces)
-  mets <- vector("list", length(ids))
-  hrs  <- vector("list", length(ids))
-  for (i in seq_along(ids)) {
-    tr <- glucotype_traces[[i]]
-    g  <- if (is.null(floor_val)) tr$glucose else pmax(tr$glucose, floor_val)
-    m  <- calc_metrics(g, floor(tr$day))
-    mg <- mean(g)
-    sg <- sd(g)
-    p_low  <- 100 * mean(g <= 70)
-    p_inr  <- 100 * mean(g > 70 & g < 140)
-    p_high <- 100 * mean(g >= 140 & g < 180)
-    p_sev  <- 100 * mean(g >= 180)
-    mets[[i]] <- tibble(
-      participant_id = ids[i],
-      mean_glu = mg, sd_glu = sg, cv = 100 * sg / mg,
-      tir = p_inr, tbr = p_low, tar = p_high + p_sev,
-      gmi = m[1], mage = m[2], jindex = m[3], adrr = m[4],
-      pct_low = p_low, pct_inr = p_inr, pct_high = p_high, pct_sev = p_sev
-    )
-    # Hour of day for each 5-minute reading (0 - 23)
-    # (computed BEFORE tibble() so the new "hour" column cannot mask this vector)
-    hour_idx   <- (((seq_along(g) - 1) * 5) %% 1440) %/% 60
-    hourly_glu <- as.numeric(tapply(g, factor(hour_idx, levels = 0:23), mean))
-    hrs[[i]] <- tibble(
-      participant_id = ids[i],
-      hour = 0:23,
-      glu  = hourly_glu
-    )
+
+# =============================================================================
+# SECTION 5. STYLE
+# =============================================================================
+
+navy <- "#12344D"
+
+app_css <- paste0("
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 16px; color: #1F2937; background: #F6F8FA; }
+
+  /* Top bar */
+  .navbar { background: ", navy, " !important; }
+  .navbar .navbar-brand, .navbar .nav-link { color: #FFFFFF !important; }
+  .navbar .nav-link { font-size: 17px; opacity: 0.8; }
+  .navbar .nav-link.active, .navbar .nav-link:hover { opacity: 1; border-bottom: 3px solid #2B7BBA; }
+  .brand-main { font-size: 22px; font-weight: bold; line-height: 1.1; }
+
+  /* Cards and headers */
+  .card { border: 1px solid #DDE3EA; border-radius: 8px; box-shadow: none; }
+  .card-header { font-size: 18px; font-weight: bold; background: #FFFFFF; }
+  .card-footer { font-size: 14px; color: #4B5563; background: #FFFFFF; }
+  .card-footer p { margin: 0; }
+  .sidebar h5 { font-size: 18px; font-weight: bold; }
+  .sidebar h6 { font-size: 15px; font-weight: bold; margin-top: 4px; }
+
+  /* Two-line tab intro */
+  .tab-intro { border-left: 4px solid #2B7BBA; background: #FFFFFF; padding: 10px 16px;
+               margin-bottom: 12px; font-size: 17px; }
+  .tab-intro p { margin: 4px 0; }
+
+  /* Landing page */
+  .hero { background: ", navy, "; color: #FFFFFF; padding: 36px 40px; border-radius: 8px; margin-bottom: 16px; }
+  .hero h1 { font-size: 34px; font-weight: bold; margin: 0 0 10px 0; }
+  .hero p  { font-size: 19px; margin: 0 0 8px 0; text-align: justify; }
+  .hero .color-key { margin-top: 16px; }
+  .color-key-title { font-size: 16px; margin-bottom: 8px; }
+  .range-chip { display: inline-block; color: #FFFFFF; font-weight: bold; padding: 6px 12px;
+                border-radius: 6px; margin: 0 8px 8px 0; font-size: 15px; }
+  .range-chip-detail { font-weight: normal; margin-left: 8px; opacity: 0.95; }
+  .tour-card h5 { font-size: 19px; font-weight: bold; }
+  .tour-card p  { margin-bottom: 8px; }
+  .tour-try { color: #4B5563; font-size: 15px; }
+  .about-line { color: #4B5563; font-size: 15px; }
+
+  /* Verdict badges */
+  .badge-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .badge-pill { display: inline-block; padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+  .badge-good { background: #2B7BBA; color: #FFFFFF; }
+  .badge-bad  { background: #D62828; color: #FFFFFF; }
+  .badge-info { background: ", navy, "; color: #FFFFFF; }
+  .verdict-headline { font-size: 22px; font-weight: bold; margin-bottom: 8px; }
+
+  @media (max-width: 768px) {
+    .hero { padding: 24px 20px; }
+    .hero h1 { font-size: 26px; }
   }
-  list(metrics = bind_rows(mets), hourly = bind_rows(hrs))
-}
+")
 
-# Cache so each winsorizing cutoff is only calculated once per app session
-pc_cache <- new.env()
-pc_get <- function(floor_val = NULL) {
-  key <- if (is.null(floor_val)) "raw" else as.character(floor_val)
-  if (is.null(pc_cache[[key]])) pc_cache[[key]] <- pc_build(floor_val)
-  pc_cache[[key]]
-}
-invisible(pc_get(NULL))   # raw version is ready when the app starts
 
-# Plain-language name and direction for a principal component, based on which
-# measure loads most strongly on it
-pc_axis <- function(rot, j) {
-  top <- rownames(rot)[which.max(abs(rot[, j]))]
-  lab <- if (top %in% c("sd_glu", "cv", "mage", "adrr")) {
-    "Glucose swings"
-  } else if (top == "tbr") {
-    "Time spent low"
-  } else {
-    "Overall glucose level"
-  }
-  ref <- switch(lab,
-                "Glucose swings" = if ("cv" %in% rownames(rot)) "cv" else top,
-                "Time spent low" = "tbr",
-                if ("mean_glu" %in% rownames(rot)) "mean_glu" else top)
-  list(label = lab, sign = if (rot[ref, j] < 0) -1 else 1)
-}
+# =============================================================================
+# SECTION 6. USER INTERFACE
+# =============================================================================
 
-# Fits PCA, keeps enough components to reach var_cut (%), runs k-means on them,
-# and returns everything the plots need. Clusters are numbered from the lowest
-# to the highest average glucose so labels stay consistent as settings change.
-pc_fit <- function(feats, var_cut, k) {
-  m <- feats$metrics
-  X <- as.matrix(m[, pc_feature_cols])
-  rownames(X) <- m$participant_id
-  # Fill any missing value (e.g., MAGE undefined) with that measure's median
-  for (j in seq_len(ncol(X))) {
-    if (anyNA(X[, j])) X[is.na(X[, j]), j] <- median(X[, j], na.rm = TRUE)
-  }
-  X <- X[, apply(X, 2, sd) > 0, drop = FALSE]
-  
-  pca   <- prcomp(X, center = TRUE, scale. = TRUE)
-  ve    <- pca$sdev^2 / sum(pca$sdev^2)
-  cum   <- cumsum(ve)
-  ncomp <- which(cum >= var_cut / 100 - 1e-9)[1]
-  if (is.na(ncomp)) ncomp <- length(cum)
-  
-  Z <- pca$x[, seq_len(ncomp), drop = FALSE]
-  
-  set.seed(123)
-  km  <- kmeans(Z, centers = k, nstart = 25, iter.max = 50)
-  ord <- order(tapply(m$mean_glu, km$cluster, mean))
-  cl  <- match(km$cluster, ord)
-  
-  # First two components (the cluster map), named and oriented in plain language
-  rot <- pca$rotation
-  ax  <- lapply(1:2, function(j) pc_axis(rot, j))
-  sc  <- pca$x[, 1:2, drop = FALSE]
-  sc[, 1] <- sc[, 1] * ax[[1]]$sign
-  sc[, 2] <- sc[, 2] * ax[[2]]$sign
-  lab1 <- ax[[1]]$label
-  lab2 <- ax[[2]]$label
-  if (lab2 == lab1) lab2 <- paste(lab2, "(second pattern)")
-  axis_x <- paste0(lab1, " (higher \u2192), ", round(100 * ve[1]), "% of information")
-  axis_y <- paste0(lab2, " (higher \u2192), ", round(100 * ve[2]), "% of information")
-  
-  d <- m %>%
-    left_join(part_info, by = "participant_id") %>%
-    mutate(cluster = factor(paste("Glucotype", cl), levels = paste("Glucotype", seq_len(k))),
-           pc1 = sc[, 1],
-           pc2 = sc[, 2])
-  
-  # Plain-language fingerprint of each cluster (typical = median child)
-  prof <- d %>%
-    group_by(cluster) %>%
-    summarise(n        = n(),
-              mean_glu = median(mean_glu),
-              cv       = median(cv),
-              tir      = median(tir),
-              tbr      = median(tbr),
-              .groups = "drop") %>%
-    mutate(label = case_when(
-      mean_glu >= 140 & cv >= 25 ~ "High and swinging",
-      mean_glu >= 140            ~ "High but steady",
-      tir >= 85 & cv < 22        ~ "Stable, mostly in range",
-      tbr >= 5                   ~ "Mostly in range, frequent lows",
-      TRUE                       ~ "In between, some swings"
-    ),
-    name = paste0(cluster, ": ", label))
-  
-  list(data = d, prof = prof, ve = ve, cum = cum, ncomp = ncomp,
-       k = k, axis_x = axis_x, axis_y = axis_y, lab1 = lab1, lab2 = lab2)
-}
+n_children  <- n_distinct(participants$participant_id)
+n_readings  <- format(nrow(readings), big.mark = ",")
+overall_tir <- sprintf("%.0f%%", 100 * mean(readings$glucose > 70 & readings$glucose < 140))
 
-# Share of children who landed in the cluster dominated by their own group
-pc_purity <- function(d) {
-  tab <- table(d$cluster, d$group)
-  sum(apply(tab, 1, max)) / nrow(d)
-}
-
-# Axis labels: glucotype number, short plain-language name, and size
-pc_xlabs <- function(prof) {
-  lab <- vapply(prof$label, function(z) paste(strwrap(z, 13), collapse = "\n"), character(1))
-  setNames(paste0(prof$cluster, "\n", lab, "\n(n = ", prof$n, ")"), prof$cluster)
-}
-
-# ---- BMI SCALE SETTINGS ------------------------------------------------------
-# NOTE: these are adult-style BMI cutoffs (kg/m^2). Pediatric BMI classification
-# is normally based on age- and sex-specific percentiles (CDC growth charts).
-bmi_min  <- 15
-bmi_max  <- 50
-bmi_cuts <- c(25, 30, 40)    # Normal < 25 | Overweight 25-29.9 | Obese 30-39.9 | Morbidly obese 40+
-bmi_cols <- c("#2E8B57", "#F2B134", "#E8743B", "#B22222")
-
-bmi_pos <- function(x) 100 * (x - bmi_min) / (bmi_max - bmi_min)
-
-# Color bar with annotations that sits directly under the BMI slider
-bmi_scale <- function() {
-  edges <- c(bmi_min, bmi_cuts, bmi_max)
-  mid   <- function(i) (bmi_pos(edges[i]) + bmi_pos(edges[i + 1])) / 2
-  
-  segs <- lapply(1:4, function(i) {
-    div(class = "bmi-seg",
-        style = paste0("left:", round(bmi_pos(edges[i]), 2), "%;",
-                       "width:", round(bmi_pos(edges[i + 1]) - bmi_pos(edges[i]), 2), "%;",
-                       "background:", bmi_cols[i], ";"))
-  })
-  
-  cuts <- lapply(bmi_cuts, function(x) {
-    div(class = "bmi-cut", style = paste0("left:", round(bmi_pos(x), 2), "%;"), x)
-  })
-  
-  labels <- list(
-    div(class = "bmi-label",
-        style = paste0("top:0px; left:0px; color:", bmi_cols[1], ";"),
-        "Normal"),
-    div(class = "bmi-label",
-        style = paste0("top:18px; left:", round(mid(2), 2), "%; transform:translateX(-50%); color:", bmi_cols[2], ";"),
-        "Overweight"),
-    div(class = "bmi-label",
-        style = paste0("top:0px; left:", round(mid(3), 2), "%; transform:translateX(-50%); color:", bmi_cols[3], ";"),
-        "Obese"),
-    div(class = "bmi-label",
-        style = paste0("top:18px; right:0px; color:", bmi_cols[4], ";"),
-        "Morbidly obese")
-  )
-  
-  div(class = "bmi-scale",
-      div(class = "bmi-cuts", cuts),
-      div(class = "bmi-bar", segs),
-      div(class = "bmi-labels", labels))
-}
-
-bmi_css <- "
-  .bmi-scale  { position: relative; height: 72px; margin: -8px 10px 12px 10px; }
-  .bmi-cuts   { position: absolute; top: 0; left: 0; right: 0; height: 14px; }
-  .bmi-cut    { position: absolute; transform: translateX(-50%); font-size: 13px; color: #555; }
-  .bmi-bar    { position: absolute; top: 18px; left: 0; right: 0; height: 10px;
-                border-radius: 5px; overflow: hidden; }
-  .bmi-seg    { position: absolute; top: 0; bottom: 0; }
-  .bmi-labels { position: absolute; top: 32px; left: 0; right: 0; height: 40px; }
-  .bmi-label  { position: absolute; font-size: 13px; font-weight: bold;
-                color: #333; white-space: nowrap; }
-"
-
-# ---- FONT SETTINGS (change these in one place) -------------------------------
-plot_font      <- "Arial"   # use "sans" if Arial doesn't show up in plots (e.g., Linux)
-body_size_px   <- 16        # most text: sidebar, plot labels
-intro_size_px  <- 18        # "Why compression lows matter" paragraphs
-title_size_px  <- 20        # major headers: plot/card titles
-tab_size_px    <- 20        # navbar tab names
-brand_size_px  <- 22        # app title in the top bar
-
-app_css <- sprintf("
-  body, .form-control, .form-select, .form-check-label, .control-label,
-  .help-block, .form-text, .card-body, .sidebar, .bslib-value-box {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-  }
-  .intro-text {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-  }
-  .navbar-brand {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-    font-weight: bold;
-    line-height: 1.25;
-    white-space: normal;
-  }
-  .navbar .nav-link {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-  }
-  .card-header {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-    font-weight: bold;
-  }
-  .sidebar h5 {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: %dpx;
-    font-weight: bold;
-  }
-", body_size_px, intro_size_px, brand_size_px, tab_size_px, title_size_px, title_size_px)
-
-# Black-and-white theme with no gridlines (used for both plots)
-plot_theme_bw <- function() {
-  theme_bw(base_size = body_size_px, base_family = plot_font) +
-    theme(
-      legend.position = "none",
-      panel.grid      = element_blank(),
-      axis.text       = element_text(size = body_size_px),
-      axis.title      = element_text(size = body_size_px),
-      strip.text      = element_text(size = body_size_px, face = "bold")
-    )
-}
-
-# -----------------------------------------------------------------------------
-# UI
-# -----------------------------------------------------------------------------
 ui <- page_navbar(
-  # Two-line title (the browser tab still uses the one-line app_title)
-  title = HTML("Continuous Glucose Monitoring <br>Pediatric Population (aged 6 - 16)"),
-  window_title = app_title,
-  theme = bs_theme(
-    version = 5,
-    bootswatch = "flatly",
-    base_font = "Arial",
-    heading_font = "Arial",
-    code_font = "Arial",
-    `font-size-base` = "1rem"   # 16px
-  ),
-  header = tags$style(HTML(paste(app_css, bmi_css))),
+  id           = "main_nav",
+  title        = HTML("<span class='brand-main'>CGM Explorer</span>"),
+  window_title = "CGM Explorer: continuous glucose monitoring in children",
+  theme = bs_theme(version = 5, bootswatch = "flatly",
+                   primary = "#1F4E79",
+                   base_font = "Arial", heading_font = "Arial", code_font = "Arial"),
+  header   = tags$style(HTML(app_css)),
   fillable = FALSE,
   
+  # ===========================================================================
+  # TAB 1. START HERE
+  # ===========================================================================
   nav_panel(
-    title = "Compression Lows",
+    title = "Start Here", value = "home",
+    
+    div(class = "hero",
+        h1("What can 14 days of glucose data tell us?"),
+        p("A continuous glucose monitor (CGM) is a small sensor that reads a child's blood sugar every 5 minutes. This dashboard turns those readings into clear answers about how children with diabetes, prediabetes, and healthy glucose differ."),
+        p("Every chart is interactive. Hover over dots for details, and use the filters on the left of each tab."),
+        div(class = "color-key",
+            div(class = "color-key-title", tags$b("Color key: "), "blue means in range (good). Red means out of range (bad)."),
+            lapply(range_levels, range_chip))
+    ),
+    
+    layout_columns(
+      fill = FALSE, col_widths = c(3, 3, 3, 3),
+      value_box("Children", n_children, theme = "primary"),
+      value_box("Days of monitoring", "14", theme = "primary"),
+      value_box("Glucose readings", n_readings, theme = "primary"),
+      value_box("Time in range", overall_tir, theme = "primary")
+    ),
+    
+    h4("Take the 5-minute tour", class = "mt-3"),
+    layout_columns(
+      fill = FALSE, col_widths = c(6, 6, 6, 6),
+      card(class = "tour-card", card_body(
+        h5("Glucose Overview"),
+        p("Compare groups of children by time in range, daily glucose curve, and key measures."),
+        p(class = "tour-try", "Try: change \"Time of day\" to Night."),
+        actionButton("go_overview", "Open Glucose Overview", class = "btn-outline-primary btn-sm"))),
+      card(class = "tour-card", card_body(
+        h5("Child Explorer"),
+        p("Follow one child through all 14 days, with low episodes marked."),
+        p(class = "tour-try", "Try: pick a child with type 2 diabetes and turn on \"Mark low episodes\"."),
+        actionButton("go_child", "Open Child Explorer", class = "btn-outline-primary btn-sm"))),
+      card(class = "tour-card", card_body(
+        h5("False Lows"),
+        p("See how sensor pressure creates fake low readings, and test whether removing them changes the results."),
+        p(class = "tour-try", "Try: turn on \"Track each child\" to connect day and night."),
+        actionButton("go_false", "Open False Lows", class = "btn-outline-primary btn-sm"))),
+      card(class = "tour-card", card_body(
+        h5("Models & Forecasts"),
+        p("Test group differences with a statistical model, then predict glucose up to an hour ahead."),
+        p(class = "tour-try", "Try: switch off the repeated-readings correction and watch the intervals shrink."),
+        actionButton("go_models", "Open Models & Forecasts", class = "btn-outline-primary btn-sm")))
+    ),
     
     card(
-      card_header("Why do compression lows matter for endocrinologists?"),
-      card_body(
-        p(class = "intro-text",
-          "Continuous glucose monitors (CGMs) are small wearable sensors that track a child's blood sugar around the clock. In children, a common problem is the \"compression low.\" When a child sleeps with their body weight pressing on the sensor, usually while lying on their side, the pressure can make the sensor report a sudden drop in blood sugar that isn't real. These false lows can trigger unnecessary alarms, lead to wrong treatment decisions, and make the data harder to trust. By comparing daytime and nighttime readings below, we can see how often this happens.")
-      )
+      card_header("How much time does each group spend in each glucose range?"),
+      girafeOutput("home_ranges", width = "100%"),
+      card_footer(p("Blue is the target. Every shade of red is a problem: dark red for lows, lighter and stronger reds for highs."))
     ),
     
-    # ---- Plot 1: Day vs. Night distribution (with its own filters) ----------
+    p(class = "about-line mt-3",
+      "Data: de-identified readings from 100 children aged 6 to 16 (34 with type 2 diabetes, 33 with prediabetes, 33 healthy), one reading every 5 minutes for 14 days. ",
+      "Built with R, Shiny, bslib, ggiraph, and mgcv.")
+  ),
+  
+  # ===========================================================================
+  # TAB 2. GLUCOSE OVERVIEW
+  # ===========================================================================
+  nav_panel(
+    title = "Glucose Overview", value = "overview",
+    
     layout_sidebar(
       sidebar = sidebar(
         width = 320,
         h5("Filters"),
-        checkboxGroupInput(
-          "groups", "Group",
-          choices  = group_levels,
-          selected = group_levels
-        ),
-        sliderInput("age", "Age (years)", min = 6, max = 16, value = c(6, 16), step = 1),
-        sliderInput("bmi", "Body Mass Index (kg/m\u00b2)",
-                    min = bmi_min, max = bmi_max,
-                    value = c(bmi_min, bmi_max), step = 1, ticks = FALSE),
-        bmi_scale(),
-        checkboxInput("track", "Track participants", value = FALSE),
-        helpText(
-          "Adds a line connecting each child's Day and Night points.",
-          "Hover over any point to see the participant and highlight their Day and Night values."
-        ),
+        checkboxGroupInput("ov_groups", "Group", choices = group_levels, selected = group_levels),
+        sliderInput("ov_age", "Age (years)", min = 6, max = 16, value = c(6, 16), step = 1),
+        sliderInput("ov_bmi", "Body mass index (kg/m\u00b2)", min = 15, max = 50, value = c(15, 50), step = 1),
+        radioButtons("ov_period", "Time of day",
+                     choices = c("All day" = "all", "Day (6 AM - 10 PM)" = "Day", "Night (10 PM - 6 AM)" = "Night")),
+        sliderInput("ov_days", "Days of monitoring", min = 1, max = 14, value = c(1, 14), step = 1),
         hr(),
-        helpText(
-          "Compression lows are sensor-related, transient false drops in glucose,",
-          "typically occurring when pressure is applied to the sensor (e.g., while sleeping)."
+        selectInput("ov_measure", "Measure shown for each child",
+                    choices = overview_measure_choices)
+      ),
+      
+      tab_intro(
+        "How groups of children compare on average glucose, time in range, and the shape of a typical day.",
+        "Children with type 2 diabetes spend the least time in range, and their glucose swings the most."
+      ),
+      
+      layout_columns(
+        fill = FALSE, col_widths = c(2, 3, 2, 2, 3),
+        value_box("Children", textOutput("ov_n"), theme = "primary"),
+        value_box("Average glucose", textOutput("ov_mean"), theme = "primary"),
+        value_box("Estimated HbA1c", textOutput("ov_gmi"), theme = "primary"),
+        value_box("Glucose variation", textOutput("ov_cv"), theme = "primary"),
+        value_box("Time in range", textOutput("ov_tir"), theme = "primary")
+      ),
+      
+      card(
+        card_header("A typical day, by group"),
+        girafeOutput("ov_day", width = "100%"),
+        card_footer(p("Line = median glucose at each time of day. Dark band = middle half of readings. Light band = 90% of readings. Dashed lines = 70 and 140 mg/dL."))
+      ),
+      
+      layout_columns(
+        fill = FALSE, col_widths = c(6, 6),
+        card(
+          card_header("Time in each glucose range"),
+          girafeOutput("ov_ranges", width = "100%"),
+          card_footer(p("Average share of readings in each range."))
+        ),
+        card(
+          card_header("How much do children differ?"),
+          girafeOutput("ov_dist", width = "100%"),
+          card_footer(p("One dot per child. Hover to see who it is."))
         )
       ),
       
-      # Summary value boxes
-      layout_columns(
-        fill = FALSE,
-        col_widths = c(3, 3, 3, 3),
-        value_box("Participants", textOutput("vb_n"), theme = "primary"),
-        value_box("Daytime compression lows", textOutput("vb_day"), theme = "warning"),
-        value_box("Nighttime compression lows", textOutput("vb_night"), theme = "secondary"),
-        value_box("% occurring at night", textOutput("vb_pct"), theme = "info")
-      ),
-      
-      # Plot
       card(
-        card_header("Distribution of Daytime vs Nighttime Compression Lows & Paired Individual Change"),
-        girafeOutput("box_plot", width = "100%")
+        card_header("Summary by group"),
+        tableOutput("ov_table"),
+        card_footer(p("Group averages for the children and days you selected."))
       )
-    ),
+    )
+  ),
+  
+  # ===========================================================================
+  # TAB 3. CHILD EXPLORER
+  # ===========================================================================
+  nav_panel(
+    title = "Child Explorer", value = "child",
     
-    # ---- Plot 2: Longitudinal CGM trace (with its own filters) --------------
     layout_sidebar(
-      class = "mt-4",
       sidebar = sidebar(
         width = 320,
-        h5("Filters"),
-        selectInput("cgm_pid", "Participant",
-                    choices = participant_choices,
+        h5("Choose a child"),
+        selectInput("ce_pid", "Participant", choices = participant_choices,
                     selected = participants$participant_id[1]),
+        sliderInput("ce_days", "Days shown", min = 1, max = 14, value = c(1, 14), step = 1),
         hr(),
-        h6("Glucose ranges"),
-        range_switch("show_hypo",   "Hypoglycemia",         "(70 mg/dL or below)", range_colors[["Hypoglycemia"]]),
-        range_switch("show_inrange", "In range",            "(71 - 139 mg/dL)",    range_colors[["In range"]]),
-        range_switch("show_hyper",  "Hyperglycemia",        "(140 - 179 mg/dL)",   range_colors[["Hyperglycemia"]]),
-        range_switch("show_severe", "Severe hyperglycemia", "(180 mg/dL and above)", range_colors[["Severe hyperglycemia"]]),
+        h6("Glucose ranges to show"),
+        checkboxGroupInput("ce_ranges", NULL,
+                           choiceNames = range_choice_names, choiceValues = range_levels,
+                           selected = range_levels),
+        input_switch("ce_episodes", "Mark low episodes", value = FALSE),
+        helpText("An episode is 15 minutes or more at 70 mg/dL or below."),
         hr(),
-        input_switch("winsorize", "Winsorize line plot", value = FALSE),
+        input_switch("ce_clean", "Clean false lows", value = FALSE),
         conditionalPanel(
-          condition = "input.winsorize",
-          sliderInput("winsor_level", "Winsorizing cutoff (mg/dL)",
-                      min = 50, max = 70, value = winsor_floor, step = 1)
+          condition = "input.ce_clean",
+          sliderInput("ce_floor", "Raise readings below (mg/dL)", min = 50, max = 70, value = 60, step = 1)
         ),
-        helpText("Replaces every reading below the cutoff with the cutoff value (60 mg/dL by default).")
+        helpText("Raises every reading below the cutoff up to the cutoff. Sharp dips flatten; the rest of the trace stays the same."),
+        hr(),
+        selectInput("ce_heat", "Day-by-hour map shows",
+                    choices = c("Average glucose (mg/dL)" = "mean_glu",
+                                "Time low (%)"            = "pct_low",
+                                "Time in range (%)"       = "pct_inr"))
+      ),
+      
+      tab_intro(
+        "One child's glucose for up to 14 days, colored by range.",
+        "Glucose follows a daily rhythm. Sharp overnight dips are often false lows from sensor pressure."
+      ),
+      
+      layout_columns(
+        fill = FALSE, col_widths = c(3, 3, 3, 3),
+        value_box("Average glucose", textOutput("ce_mean"), theme = "primary"),
+        value_box("Time in range", textOutput("ce_tir"), theme = "primary"),
+        value_box("Low episodes", textOutput("ce_eps"), theme = "primary"),
+        value_box("Glucose variation", textOutput("ce_cv"), theme = "primary")
       ),
       
       card(
-        card_header("Visual effects of winsorizing compression lows"),
-        card_body(
-          p(class = "intro-text",
-            "Winsorizing is a simple way to limit the influence of extreme values. Instead of deleting unusual readings, each one is replaced with a chosen cutoff value. Here, compression lows can push sensor readings as low as 40 mg/dL, so any reading below the selected cutoff (60 mg/dL by default) is replaced with that cutoff. Turn on the winsorize switch, then move the slider to choose the cutoff and see how the sharp dips flatten out while the rest of the child's glucose pattern stays the same."),
-          plotOutput("cgm_plot", height = "450px")
-        )
+        card_header("Glucose over time"),
+        plotOutput("ce_trace", height = "430px"),
+        card_footer(p("Each line segment takes the color of its range. Turn ranges on or off in the sidebar."))
+      ),
+      
+      card(
+        card_header("Every day, every hour"),
+        girafeOutput("ce_heatmap", width = "100%"),
+        card_footer(p("Each tile is one hour of one day. Hover for the value. Days run left to right; hours run top to bottom."))
       )
-    ),
+    )
+  ),
+  
+  # ===========================================================================
+  # TAB 4. FALSE LOWS
+  # ===========================================================================
+  nav_panel(
+    title = "False Lows", value = "false",
     
-    # ---- Plot 3: Effect of winsorizing on CGM-derived metrics ---------------
     layout_sidebar(
-      class = "mt-4",
       sidebar = sidebar(
         width = 320,
         h5("Filters"),
-        checkboxGroupInput(
-          "eq_groups", "Group",
-          choices  = group_levels,
-          selected = group_levels
-        ),
-        helpText("Which groups of children to include."),
-        sliderInput("eq_margin", "How much change is too much? (\u00b1 %)",
-                    min = 1, max = 10, value = 5, step = 0.5),
-        helpText(
-          "The largest average change we would still call negligible. Smaller is stricter.",
-          "It sets the gray band in the charts and the unchanged / changed verdict."
-        ),
-        selectInput("w_floor", "Winsorizing floor (mg/dL)",
+        checkboxGroupInput("fl_groups", "Group", choices = group_levels, selected = group_levels),
+        sliderInput("fl_age", "Age (years)", min = 6, max = 16, value = c(6, 16), step = 1),
+        sliderInput("fl_bmi", "Body mass index (kg/m\u00b2)", min = 15, max = 50, value = c(15, 50), step = 1),
+        checkboxInput("fl_track", "Track each child", value = FALSE),
+        helpText("Connects each child's day and night dots. Hover over a dot to highlight that child."),
+        hr(),
+        h5("Cleaning test"),
+        selectInput("fl_floor", "Raise readings below (mg/dL)",
                     choices = c(50, 55, 60, 65, 70), selected = 60),
-        helpText(
-          "Readings below this value are raised to it before the measures are recalculated.",
-          "Separate from the winsorize switch and slider in the line plot above."
-        ),
-        input_switch("eq_split", "Split by group", value = TRUE),
-        helpText("On: one row per group. Off: all selected children combined.")
+        sliderInput("fl_margin", "Largest change still called negligible (\u00b1 %)",
+                    min = 1, max = 10, value = 5, step = 0.5),
+        helpText("A smaller number is a stricter test."),
+        input_switch("fl_split", "Split results by group", value = TRUE)
       ),
       
-      # ---- Short answer first -------------------------------------------------
+      tab_intro(
+        "A false low is a sudden, fake drop in the sensor reading. It happens when a sleeping child lies on the sensor. False lows trigger needless alarms and wrong treatment decisions.",
+        "False lows happen far more often at night. Cleaning them barely moves average glucose but can shift the risk measures."
+      ),
+      
+      layout_columns(
+        fill = FALSE, col_widths = c(3, 3, 3, 3),
+        value_box("Children", textOutput("fl_n"), theme = "primary"),
+        value_box("False lows by day", textOutput("fl_day"), theme = "primary"),
+        value_box("False lows by night", textOutput("fl_night"), theme = "primary"),
+        value_box("Share at night", textOutput("fl_pct"), theme = "primary")
+      ),
+      
       card(
-        card_header("Does winsorizing change the summary measures?"),
+        card_header("False lows per child: day vs. night"),
+        girafeOutput("fl_box", width = "100%"),
+        card_footer(p("Each dot is one child's false lows over 14 days. Boxes show the middle half of children."))
+      ),
+      
+      card(
+        card_header("Does cleaning false lows change the results?"),
         card_body(
-          uiOutput("eq_verdict"),
-          p(class = "intro-text",
-            "Winsorizing raises readings below a cutoff up to that cutoff. Four measures are calculated for each child from the original and winsorized readings:"),
-          tags$ul(class = "intro-text",
-                  tags$li(strong("HbA1c (GMI, %): "), "estimated average blood sugar over the past few months."),
-                  tags$li(strong("MAGE (mg/dL): "), "typical size of the big glucose swings."),
-                  tags$li(strong("J-index: "), "combines how high and how variable glucose is."),
-                  tags$li(strong("ADRR: "), "risk from dangerous lows and highs; the most sensitive to winsorizing.")
+          uiOutput("fl_verdict"),
+          p("We recalculate four summary measures after raising low readings to the cutoff:"),
+          tags$ul(
+            tags$li(tags$b("HbA1c estimate (GMI): "), "estimated average blood sugar over several months."),
+            tags$li(tags$b("Big swings (MAGE): "), "typical size of the large glucose swings."),
+            tags$li(tags$b("Level + swings (J-index): "), "combines how high and how variable glucose is."),
+            tags$li(tags$b("Risk of lows and highs (ADRR): "), "daily risk from dangerous lows and highs.")
           ),
-          accordion(
-            open = FALSE,
-            class = "mt-2",
-            accordion_panel(
-              "Statistical details",
-              tags$ul(
-                tags$li(strong("GMI: "), "3.31 + 0.02392 \u00d7 mean glucose (mg/dL)."),
-                tags$li(strong("MAGE: "), "mean of peak-to-nadir swings larger than 1 SD."),
-                tags$li(strong("J-index: "), "0.001 \u00d7 (mean + SD)\u00b2."),
-                tags$li(strong("ADRR: "), "daily max low-risk + max high-risk, averaged over 14 days."),
-                tags$li(strong("% change: "), "100 \u00d7 (winsorized \u2212 original) / original, per child."),
-                tags$li(strong("Unchanged (TOST): "), "the whole 95% CI of the mean % change sits inside the \u00b1 margin."),
-                tags$li(strong("CCC: "), "Lin's concordance; 1 = winsorized values identical to originals.")
-              )
-            )
-          )
+          accordion(open = FALSE, class = "mt-2",
+                    accordion_panel("Technical details",
+                                    tags$ul(
+                                      tags$li("GMI = 3.31 + 0.02392 \u00d7 mean glucose (mg/dL)."),
+                                      tags$li("MAGE = mean of the glucose swings larger than 1 standard deviation."),
+                                      tags$li("J-index = 0.001 \u00d7 (mean + SD)\u00b2."),
+                                      tags$li("ADRR = largest daily low risk plus largest daily high risk, averaged over 14 days."),
+                                      tags$li("% change = 100 \u00d7 (cleaned \u2212 original) / original, per child."),
+                                      tags$li("\"Unchanged\" means the full 95% confidence interval of the average % change lies inside the \u00b1 margin (equivalence test).")
+                                    )))
         )
       ),
       
-      # ---- Average change and child-by-child, side by side ---------------------
       layout_columns(
-        fill = FALSE,
-        col_widths = c(6, 6),
+        fill = FALSE, col_widths = c(6, 6),
         card(
           card_header("Average change per measure"),
-          girafeOutput("eq_forest", width = "100%"),
-          card_footer(
-            p("Dot = average % change with 95% CI. Inside the gray band = unchanged.")
-          )
+          girafeOutput("fl_forest", width = "100%"),
+          card_footer(p("Dot = average % change, line = 95% interval. Inside the gray band means unchanged."))
         ),
         card(
-          card_header("Does anyone move?"),
-          girafeOutput("eq_scatter", width = "100%"),
-          card_footer(
-            p("One dot per child; on the diagonal = no change. CCC = agreement (1 = identical). % = children changed by more than the margin.")
-          )
+          card_header("Does any child change a lot?"),
+          girafeOutput("fl_scatter", width = "100%"),
+          card_footer(p("One dot per child. A dot on the diagonal did not change."))
         )
       )
     )
   ),
   
   # ===========================================================================
-  # TAB 2: Glucotypes (PCA + k-means)   (added)
+  # TAB 5. MODELS & FORECASTS
   # ===========================================================================
   nav_panel(
-    title = "Glucotypes",
+    title = "Models & Forecasts", value = "models",
     
-    layout_sidebar(
-      sidebar = sidebar(
-        width = 320,
-        h5("Settings"),
-        sliderInput("pc_k", "Number of glucotypes",
-                    min = 2, max = 4, value = 3, step = 1),
-        helpText("How many subgroups the computer looks for."),
-        sliderInput("pc_var", "Information to keep (%)",
-                    min = 50, max = 95, value = 85, step = 1),
-        helpText("Share of the original information used to form the glucotypes."),
-        hr(),
-        input_switch("pc_wins", "Use winsorized readings", value = FALSE),
-        conditionalPanel(
-          condition = "input.pc_wins",
-          sliderInput("pc_floor", "Winsorizing cutoff (mg/dL)",
-                      min = 50, max = 70, value = winsor_floor, step = 1)
-        ),
-        helpText("Raises readings below the cutoff to the cutoff (removes false lows), then recalculates.")
-      ),
-      
-      # PCA map, with a caption above it explaining what it shows
-      card(
-        card_header("Glucotype map (PCA): each dot is one child"),
-        card_body(
-          uiOutput("pc_caption"),
-          girafeOutput("pc_map", width = "100%")
-        ),
-        card_footer(textOutput("pc_switch_text"))
-      ),
-      
-      # Stacked bars: who is in each glucotype / time in ranges
-      layout_columns(
-        fill = FALSE,
-        col_widths = c(6, 6),
-        card(
-          card_header("Who is in each glucotype?"),
-          girafeOutput("pc_comp_plot", width = "100%"),
-          card_footer(textOutput("pc_comp_text"))
-        ),
-        card(
-          card_header("Time in ranges"),
-          girafeOutput("pc_range_plot", width = "100%"),
-          card_footer(p("Average share of the 14 days spent in each range."))
+    navset_card_underline(
+      # ---- 5a. Compare groups over time ------------------------------------
+      nav_panel(
+        "Compare groups",
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 320,
+            h5("Build the model"),
+            selectInput("md_outcome", "What to compare", choices = model_outcomes),
+            checkboxGroupInput("md_terms", "What might explain it",
+                               choices = model_predictors,
+                               selected = c("group", "night", "weekend")),
+            helpText("Every child gets their own baseline. Choosing Group \u00d7 Night adds Group and Night automatically."),
+            input_switch("md_ar", "Account for repeated readings from each child", value = TRUE),
+            helpText("Readings from the same child resemble each other. Turn this off to see how ignoring that makes results look more certain than they are."),
+            actionButton("md_fit", "Fit model", class = "btn-primary w-100")
+          ),
+          
+          tab_intro(
+            "Which factors change glucose, after accounting for the fact that each child is measured many times.",
+            "A dark dot with a line that avoids zero marks a real difference. Compare the results with and without the repeated-readings correction."
+          ),
+          
+          card(card_header("What was fit?"), card_body(uiOutput("md_summary"))),
+          
+          layout_columns(
+            fill = FALSE, col_widths = c(6, 6),
+            card(
+              card_header("Effects with 95% confidence intervals"),
+              girafeOutput("md_forest", width = "100%"),
+              card_footer(p("Dot right of zero = higher than the comparison. Group effects compare with type 2 diabetes; night compares with day."))
+            ),
+            card(
+              card_header("The 24-hour curve, by group"),
+              plotOutput("md_gam", height = "400px"),
+              card_footer(p("Smooth curves of average glucose over the day, with 95% bands."))
+            )
+          ),
+          
+          card(accordion(open = FALSE,
+                         accordion_panel("Full model output (technical)", verbatimTextOutput("md_text"))))
         )
       ),
       
-      # Typical day
-      card(
-        card_header("A typical day in each glucotype"),
-        girafeOutput("pc_day_plot", width = "100%"),
-        card_footer(
-          p("Line = median glucose by hour. Band = most children (10th to 90th percentile). Dashed lines = 70 and 140 mg/dL.")
+      # ---- 5b. Forecast glucose ---------------------------------------------
+      nav_panel(
+        "Forecast glucose",
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 320,
+            h5("Settings"),
+            selectInput("fc_pid", "Participant", choices = participant_choices,
+                        selected = participants$participant_id[1]),
+            selectInput("fc_h", "How far ahead",
+                        choices = c("15 minutes" = 3, "30 minutes" = 6, "45 minutes" = 9, "60 minutes" = 12),
+                        selected = 6),
+            selectInput("fc_day", "Day shown in the chart", choices = 9:14, selected = 11),
+            helpText("Days 9 - 14 hold the forecasts. Days 1 - 8 train the models."),
+            hr(),
+            input_switch("fc_clean", "Clean false lows first", value = FALSE),
+            conditionalPanel(
+              condition = "input.fc_clean",
+              sliderInput("fc_floor", "Raise readings below (mg/dL)", min = 50, max = 70, value = 60, step = 1)
+            ),
+            helpText("Forecasts are scored against the same cleaned readings.")
+          ),
+          
+          tab_intro(
+            "Three methods predict glucose a short time ahead using only the readings available at that moment. Each method trains on earlier days and predicts later days.",
+            "The regression model beats the simple methods. Sudden false lows are hard to predict for any method."
+          ),
+          
+          card(
+            card_header("Forecast vs. what happened"),
+            plotOutput("fc_trace", height = "420px"),
+            card_footer(p("Each forecast appears at the time it predicts. Blue band = 95% prediction range for the regression model. Dashed lines = 70 and 140 mg/dL."))
+          ),
+          
+          layout_columns(
+            fill = FALSE, col_widths = c(6, 6),
+            card(
+              card_header("How accurate are the forecasts?"),
+              tableOutput("fc_table"),
+              card_footer(p("Lower error is better. \"Close enough\" means within 15 mg/dL (at 100 or below) or within 15% (above 100)."))
+            ),
+            card(
+              card_header("Can a forecast warn of a coming low?"),
+              plotOutput("fc_roc", height = "380px"),
+              card_footer(p("A curve closer to the top-left corner warns better. AUC of 0.5 equals a coin flip; 1.0 is perfect."))
+            )
+          ),
+          
+          card(
+            card_header("All 100 children: regression model vs. repeating the latest reading"),
+            card_body(
+              actionButton("fc_all", "Run all 100 children", class = "btn-primary"),
+              helpText("Uses the settings above. Takes a few seconds."),
+              textOutput("fc_all_text"),
+              girafeOutput("fc_all_plot", width = "100%")
+            ),
+            card_footer(p("One dot per child. Dots below the diagonal mean the regression model made smaller errors."))
+          )
         )
       )
     )
   )
 )
 
-# -----------------------------------------------------------------------------
-# SERVER
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# SECTION 7. SERVER
+# =============================================================================
+
 server <- function(input, output, session) {
   
-  # Filtered data (participant-level filters applied to both periods)
-  filtered <- reactive({
-    req(input$groups)
-    cgm_data %>%
-      filter(
-        group %in% input$groups,
-        age >= input$age[1], age <= input$age[2],
-        bmi >= input$bmi[1], bmi <= input$bmi[2]
-      )
+  # ---- Tab 1: navigation buttons and overview chart --------------------------
+  observeEvent(input$go_overview, nav_select("main_nav", "overview"))
+  observeEvent(input$go_child,    nav_select("main_nav", "child"))
+  observeEvent(input$go_false,    nav_select("main_nav", "false"))
+  observeEvent(input$go_models,   nav_select("main_nav", "models"))
+  
+  output$home_ranges <- renderGirafe(plot_range_bars(child_summary(readings)))
+  
+  # ===========================================================================
+  # Tab 2: Glucose Overview
+  # ===========================================================================
+  
+  # Readings filtered by group, age, BMI, and days (used for the daily curve)
+  ov_base <- reactive({
+    req(input$ov_groups, input$ov_days)
+    readings %>%
+      filter(group %in% input$ov_groups,
+             age >= input$ov_age[1], age <= input$ov_age[2],
+             bmi >= input$ov_bmi[1], bmi <= input$ov_bmi[2],
+             day_num >= input$ov_days[1], day_num <= input$ov_days[2])
   })
   
-  # Plot data: compression lows plus plotting helpers
-  plot_data <- reactive({
-    filtered() %>%
-      mutate(
-        value    = comp_events,
-        x_center = as.numeric(period),           # box position (1 = Day, 2 = Night)
-        x_pt     = x_center + jit_x,             # point position (same offset Day & Night)
-        # Hover text: participant ID, age, and Body Mass Index
-        tip      = paste0("<b>", participant_id, "</b><br/>",
-                          "Age: ", age, " years<br/>",
-                          "Body Mass Index: ", bmi)
-      )
+  # Same, plus the time-of-day choice (used for everything else)
+  ov_data <- reactive({
+    d <- ov_base()
+    if (input$ov_period != "all") d <- filter(d, period == input$ov_period)
+    validate(need(nrow(d) > 0, "No children match these filters. Widen the filters to see results."))
+    d
   })
+  ov_child <- reactive(child_summary(ov_data()))
   
-  # ---- Value boxes ----------------------------------------------------------
-  output$vb_n <- renderText({
-    n_distinct(filtered()$participant_id)
-  })
+  output$ov_n    <- renderText(n_distinct(ov_data()$participant_id))
+  output$ov_mean <- renderText(sprintf("%.0f mg/dL", mean(ov_child()$mean_glu)))
+  output$ov_gmi  <- renderText(sprintf("%.1f%%", mean(ov_child()$gmi)))
+  output$ov_cv   <- renderText(sprintf("%.1f%%", mean(ov_child()$cv)))
+  output$ov_tir  <- renderText(sprintf("%.0f%%", mean(ov_child()$pct_inr)))
   
-  output$vb_day <- renderText({
-    sum(filtered()$comp_events[filtered()$period == "Day"])
-  })
-  
-  output$vb_night <- renderText({
-    sum(filtered()$comp_events[filtered()$period == "Night"])
-  })
-  
-  output$vb_pct <- renderText({
-    d <- filtered()
-    total <- sum(d$comp_events)
-    if (total == 0) return("NA")
-    paste0(round(100 * sum(d$comp_events[d$period == "Night"]) / total, 1), "%")
-  })
-  
-  # ---- Plot 1: Day vs. Night distribution -----------------------------------
-  output$box_plot <- renderGirafe({
-    df <- plot_data()
-    req(nrow(df) > 0)
-    track <- isTRUE(input$track)
+  output$ov_day <- renderGirafe({
+    d <- ov_base()
+    validate(need(nrow(d) > 0, "No children match these filters. Widen the filters to see results."))
+    a <- d %>%
+      group_by(group, bin) %>%
+      summarise(q05 = quantile(glucose, 0.05), q25 = quantile(glucose, 0.25),
+                q50 = median(glucose),
+                q75 = quantile(glucose, 0.75), q95 = quantile(glucose, 0.95),
+                .groups = "drop") %>%
+      mutate(tip = paste0("<b>", group, "</b><br/>", format_clock(bin), "<br/>",
+                          "Median: ", sprintf("%.0f", q50), " mg/dL<br/>",
+                          "Middle half: ", sprintf("%.0f", q25), " to ", sprintf("%.0f", q75), "<br/>",
+                          "90% of readings: ", sprintf("%.0f", q05), " to ", sprintf("%.0f", q95)))
     
-    # Boxes: very light fill, dark outline
-    p <- ggplot(df) +
-      geom_boxplot(aes(x = x_center, y = value, group = period,
-                       fill = period, color = period),
-                   alpha = 1, outlier.shape = NA, width = 0.55, linewidth = 0.8)
+    p <- ggplot(a, aes(x = bin)) +
+      geom_hline(yintercept = c(70, 140), linetype = "dashed", color = "grey60") +
+      geom_ribbon(aes(ymin = q05, ymax = q95, fill = group), alpha = 0.18) +
+      geom_ribbon(aes(ymin = q25, ymax = q75, fill = group), alpha = 0.35) +
+      geom_line(aes(y = q50, color = group), linewidth = 1.1) +
+      geom_point_interactive(aes(y = q50, color = group, tooltip = tip,
+                                 data_id = paste(group, bin)), size = 1.8) +
+      facet_wrap(~ group, nrow = 1) +
+      scale_color_manual(values = group_colors) +
+      scale_fill_manual(values = group_colors) +
+      scale_x_continuous(breaks = clock_breaks$breaks, labels = clock_breaks$labels) +
+      coord_cartesian(ylim = c(40, 250)) +
+      labs(x = "Time of day", y = "Sensor glucose (mg/dL)") +
+      theme_dashboard()
+    make_girafe(p, 12, 5, fade = 0.35)
+  })
+  
+  output$ov_ranges <- renderGirafe(plot_range_bars(ov_child()))
+  
+  output$ov_dist <- renderGirafe({
+    cs  <- ov_child()
+    met <- input$ov_measure
+    lab <- names(overview_measure_choices)[overview_measure_choices == met]
+    plot_box_by_group(cs, cs[[met]], lab)
+  })
+  
+  output$ov_table <- renderTable({
+    ov_child() %>%
+      group_by(Group = as.character(group)) %>%
+      summarise(Children = n(),
+                `Average glucose (mg/dL)` = mean(mean_glu),
+                `HbA1c estimate (%)`      = mean(gmi),
+                `Variation, CV (%)`       = mean(cv),
+                `Time in range (%)`       = mean(pct_inr),
+                `Time low (%)`            = mean(pct_low),
+                `Time below 54 (%)`       = mean(pct_low54),
+                `Time high (%)`           = mean(pct_above),
+                .groups = "drop")
+  }, digits = 1, striped = TRUE, bordered = TRUE, width = "100%")
+  
+  # ===========================================================================
+  # Tab 3: Child Explorer
+  # ===========================================================================
+  
+  # The selected child's readings, cleaned if the switch is on
+  ce_glucose <- reactive({
+    req(input$ce_pid)
+    g <- all_traces[[input$ce_pid]]$glucose
+    clean_readings(g, if (isTRUE(input$ce_clean)) input$ce_floor else NULL)
+  })
+  
+  output$ce_mean <- renderText(sprintf("%.0f mg/dL", mean(ce_glucose())))
+  output$ce_tir  <- renderText(sprintf("%.0f%%", 100 * mean(ce_glucose() > 70 & ce_glucose() < 140)))
+  output$ce_cv   <- renderText(sprintf("%.0f%%", 100 * sd(ce_glucose()) / mean(ce_glucose())))
+  output$ce_eps  <- renderText({
+    e <- detect_episodes(ce_glucose())
+    if (is.null(e)) "0" else nrow(e)
+  })
+  
+  output$ce_trace <- renderPlot({
+    req(input$ce_days)
+    validate(need(length(input$ce_ranges) > 0, "Turn on at least one glucose range to see the trace."))
+    tr <- all_traces[[input$ce_pid]]
+    g  <- ce_glucose()
+    d0 <- input$ce_days[1] - 1
+    d1 <- input$ce_days[2]
     
-    # Faint gray line connecting each child's Day and Night points (only when tracking)
-    if (track) {
-      p <- p +
-        geom_line_interactive(aes(x = x_pt, y = value, group = participant_id,
-                                  data_id = participant_id, tooltip = tip),
-                              color = track_line_color, linewidth = 0.5)
+    df <- tibble(x = tr$day, glucose = g) %>%
+      filter(x >= d0, x < d1) %>%
+      mutate(range = classify_glucose(glucose),
+             # Hidden ranges become NA so the line breaks instead of bridging them
+             glucose_shown = ifelse(range %in% input$ce_ranges, glucose, NA_real_))
+    
+    p <- ggplot(df, aes(x = x, y = glucose_shown))
+    if (isTRUE(input$ce_episodes)) {
+      e <- detect_episodes(g)
+      if (!is.null(e)) {
+        e <- e %>% mutate(xmin = (start - 1) * 5 / 1440, xmax = end * 5 / 1440) %>%
+          filter(xmax > d0, xmin < d1)
+        if (nrow(e) > 0) {
+          p <- p + geom_rect(data = e, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+                             inherit.aes = FALSE, fill = range_colors[["Low"]], alpha = 0.22)
+        }
+      }
     }
-    
-    # Points are ALWAYS interactive: hovering shows the participant ID and
-    # highlights that child's Day and Night points while the rest fade
-    p <- p +
-      geom_point_interactive(aes(x = x_pt, y = value, color = period,
-                                 data_id = participant_id, tooltip = tip),
-                             alpha = 0.85, size = box_point_size)
-    
-    p <- p +
-      facet_wrap(~ group) +
-      scale_fill_manual(values = box_fill_colors) +
-      scale_color_manual(values = box_point_colors) +
-      scale_x_continuous(breaks = c(1, 2), labels = c("Day", "Night"),
-                         limits = c(0.5, 2.5)) +
-      labs(x = NULL, y = metric_label) +
-      plot_theme_bw()
-    
-    girafe(
-      ggobj = p,
-      width_svg = 12,
-      height_svg = 5.5,
-      options = list(
-        opts_hover(css = "stroke:black;stroke-width:2px;fill-opacity:1;stroke-opacity:1;"),
-        opts_hover_inv(css = "opacity:0.12;"),
-        opts_tooltip(css = "background:white;color:black;border:1px solid #666;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;border-radius:4px;"),
-        opts_toolbar(saveaspng = FALSE),
-        opts_sizing(rescale = TRUE)
-      )
-    )
-  })
-  
-  # ---- Plot 2: Longitudinal CGM trace ---------------------------------------
-  # Raw 14-day trace for the selected participant (re-simulated only when the
-  # participant changes, not when toggles change)
-  cgm_series <- reactive({
-    req(input$cgm_pid)
-    simulate_cgm(input$cgm_pid)
-  })
-  
-  output$cgm_plot <- renderPlot({
-    raw <- cgm_series()
-    
-    # Which glucose ranges are switched on
-    visible <- c(
-      if (isTRUE(input$show_hypo))    "Hypoglycemia",
-      if (isTRUE(input$show_inrange)) "In range",
-      if (isTRUE(input$show_hyper))   "Hyperglycemia",
-      if (isTRUE(input$show_severe))  "Severe hyperglycemia"
-    )
-    validate(need(length(visible) > 0,
-                  "Turn on at least one glucose range to display the data."))
-    
-    # Winsorize: replace every reading below 60 mg/dL with 60 mg/dL
-    df <- raw %>%
-      mutate(
-        glucose_w = if (isTRUE(input$winsorize)) pmax(glucose, input$winsor_level) else glucose,
-        range     = classify_glucose(glucose_w),
-        # Hidden ranges become NA so the line breaks instead of connecting across them
-        glucose_plot = ifelse(range %in% visible, glucose_w, NA_real_)
-      )
-    
-    # Fixed y-axis for every participant: always 40 - 250 mg/dL
-    y_min <- 40
-    y_max <- 250
-    
-    ggplot(df, aes(x = day, y = glucose_plot, color = range, group = 1)) +
-      geom_line(linewidth = 0.7) +
+    p +
+      geom_vline(xintercept = d0:d1, color = "grey88") +
+      geom_hline(yintercept = c(70, 140), linetype = "dashed", color = "grey60") +
+      geom_line(aes(color = range, group = 1), linewidth = 0.7) +
       scale_color_manual(values = range_colors, breaks = range_levels, drop = FALSE) +
-      scale_x_continuous(breaks = seq(0.5, 13.5, by = 1), labels = 1:14,
-                         limits = c(0, 14), expand = c(0.005, 0)) +
-      coord_cartesian(ylim = c(y_min, y_max)) +
+      scale_x_continuous(breaks = d0:(d1 - 1) + 0.5, labels = (d0 + 1):d1) +
+      coord_cartesian(xlim = c(d0, d1), ylim = c(40, 250), expand = FALSE) +
       guides(color = guide_legend(override.aes = list(linewidth = 2))) +
       labs(x = "Day of monitoring", y = "Sensor glucose (mg/dL)") +
-      plot_theme_bw() +
-      theme(legend.position = "top",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px))
+      theme_dashboard() +
+      theme(legend.position = "top", legend.title = element_blank(),
+            legend.text = element_text(size = base_font_px))
   })
   
-  # ---- Plot 3: Effect of winsorizing on CGM-derived metrics -----------------
-  # Winsorized metrics (recomputed only when the floor changes)
-  wins_tbl <- reactive({
-    req(input$w_floor)
-    metric_tbl(as.numeric(input$w_floor)) %>% rename(wins = value)
+  output$ce_heatmap <- renderGirafe({
+    met <- input$ce_heat
+    lab <- c(mean_glu = "Average glucose (mg/dL)", pct_low = "Time low (%)",
+             pct_inr = "Time in range (%)")[[met]]
+    g <- ce_glucose()
+    h <- tibble(glucose = g,
+                day_num = floor(all_traces[[input$ce_pid]]$day) + 1,
+                hour    = (((seq_along(g) - 1) * 5) %% 1440) %/% 60) %>%
+      group_by(day_num, hour) %>%
+      summarise(mean_glu = mean(glucose),
+                pct_low  = 100 * mean(glucose <= 70),
+                pct_inr  = 100 * mean(glucose > 70 & glucose < 140),
+                .groups = "drop")
+    h$value <- h[[met]]
+    h$tip <- paste0("<b>Day ", h$day_num, " (", weekday_names[(h$day_num - 1) %% 7 + 1], ")</b><br/>",
+                    format_clock(h$hour), "<br/>", lab, ": ", sprintf("%.1f", h$value))
+    
+    p <- ggplot(h, aes(x = day_num, y = hour, fill = value)) +
+      geom_tile_interactive(aes(tooltip = tip, data_id = paste(day_num, hour)),
+                            color = "white", linewidth = 0.2) +
+      scale_y_reverse(breaks = c(0, 6, 12, 18), labels = c("12 AM", "6 AM", "12 PM", "6 PM")) +
+      scale_x_continuous(breaks = 1:14,
+                         labels = paste0(1:14, "\n", weekday_names[((1:14) - 1) %% 7 + 1]),
+                         expand = c(0, 0)) +
+      labs(x = "Day of monitoring", y = "Time of day") +
+      theme_dashboard() + theme(legend.position = "right")
+    
+    p <- switch(met,
+                mean_glu = p + glucose_fill_scale(lab),
+                pct_low  = p + scale_fill_gradient(name = lab, low = "white", high = range_colors[["Low"]]),
+                pct_inr  = p + scale_fill_gradient(name = lab, low = "white", high = range_colors[["In range"]]))
+    make_girafe(p, 12, 5.5, fade = 0.4)
   })
   
-  # Paired raw / winsorized values for the selected groups
-  eq_data <- reactive({
-    req(input$eq_groups)
-    raw_metrics %>%
-      left_join(wins_tbl(), by = c("participant_id", "metric")) %>%
+  # ===========================================================================
+  # Tab 4: False Lows
+  # ===========================================================================
+  
+  fl_filtered <- reactive({
+    req(input$fl_groups)
+    d <- period_summary %>%
+      filter(group %in% input$fl_groups,
+             age >= input$fl_age[1], age <= input$fl_age[2],
+             bmi >= input$fl_bmi[1], bmi <= input$fl_bmi[2])
+    validate(need(nrow(d) > 0, "No children match these filters. Widen the filters to see results."))
+    d
+  })
+  
+  output$fl_n     <- renderText(n_distinct(fl_filtered()$participant_id))
+  output$fl_day   <- renderText(sum(fl_filtered()$comp_events[fl_filtered()$period == "Day"]))
+  output$fl_night <- renderText(sum(fl_filtered()$comp_events[fl_filtered()$period == "Night"]))
+  output$fl_pct   <- renderText({
+    d <- fl_filtered()
+    paste0(round(100 * sum(d$comp_events[d$period == "Night"]) / sum(d$comp_events), 1), "%")
+  })
+  
+  output$fl_box <- renderGirafe({
+    df <- fl_filtered() %>%
+      mutate(value    = comp_events,
+             x_center = as.numeric(period),
+             x_point  = x_center + jitter_x,
+             tip      = paste0("<b>", participant_id, "</b><br/>Age: ", age,
+                               " years<br/>Body mass index: ", bmi, "<br/>",
+                               period, " false lows: ", comp_events))
+    
+    p <- ggplot(df) +
+      geom_boxplot(aes(x = x_center, y = value, group = period, fill = period, color = period),
+                   alpha = 0.25, outlier.shape = NA, width = 0.55, linewidth = 0.8)
+    if (isTRUE(input$fl_track)) {
+      p <- p + geom_line_interactive(
+        aes(x = x_point, y = value, group = participant_id, data_id = participant_id, tooltip = tip),
+        color = "grey70", linewidth = 0.5)
+    }
+    p <- p +
+      geom_point_interactive(aes(x = x_point, y = value, color = period,
+                                 data_id = participant_id, tooltip = tip),
+                             alpha = 0.85, size = 3) +
+      facet_wrap(~ group) +
+      scale_fill_manual(values = period_colors) +
+      scale_color_manual(values = period_colors) +
+      scale_x_continuous(breaks = c(1, 2), labels = c("Day", "Night"), limits = c(0.5, 2.5)) +
+      labs(x = NULL, y = "False lows per 14 days") +
+      theme_dashboard()
+    make_girafe(p, 12, 5.2, fade = 0.12)
+  })
+  
+  # Original vs. cleaned measures for the selected groups
+  fl_changes <- reactive({
+    req(input$fl_groups, input$fl_floor)
+    cleaned <- measures_for(as.numeric(input$fl_floor)) %>% rename(cleaned = value)
+    measures_for(NULL) %>% rename(original = value) %>%
+      left_join(cleaned, by = c("participant_id", "measure")) %>%
       left_join(participants %>% select(participant_id, group), by = "participant_id") %>%
-      filter(group %in% input$eq_groups, !is.na(raw), !is.na(wins), raw > 0) %>%
-      mutate(metric = factor(metric, levels = metric_levels),
-             pct    = 100 * (wins - raw) / raw)
+      filter(group %in% input$fl_groups, !is.na(original), !is.na(cleaned), original > 0) %>%
+      mutate(measure = factor(measure, levels = summary_measure_names),
+             pct     = 100 * (cleaned - original) / original)
   })
   
-  eq_stats <- reactive({
-    eq_summary(eq_data(), margin = input$eq_margin, by_group = isTRUE(input$eq_split))
+  output$fl_verdict <- renderUI({
+    s <- summarise_change(fl_changes(), input$fl_margin, by_group = FALSE)
+    validate(need(nrow(s) > 0, "Select at least one group to see the answer."))
+    n_ok  <- sum(s$unchanged)
+    cut   <- input$fl_floor
+    headline <- if (n_ok == nrow(s)) {
+      sprintf("Cleaning at %s mg/dL leaves all %d measures essentially unchanged.", cut, nrow(s))
+    } else if (n_ok == 0) {
+      sprintf("Cleaning at %s mg/dL changes all %d measures.", cut, nrow(s))
+    } else {
+      sprintf("Cleaning at %s mg/dL leaves %d of %d measures essentially unchanged.", cut, n_ok, nrow(s))
+    }
+    badges <- lapply(seq_len(nrow(s)), function(i) {
+      span(class = paste("badge-pill", if (s$unchanged[i]) "badge-good" else "badge-bad"),
+           paste0(if (s$unchanged[i]) "\u2714 " else "\u26A0 ", as.character(s$measure[i]),
+                  ": ", sprintf("%+.1f%%", s$pct_mean[i])))
+    })
+    tagList(
+      div(class = "verdict-headline", headline),
+      div(class = "badge-row", badges),
+      div(class = "text-muted",
+          sprintf("Blue = unchanged. Red = changed. All selected children combined; margin \u00b1%s%%.", input$fl_margin))
+    )
   })
   
-  # Forest (equivalence) plot (hover over a point for its values)
-  output$eq_forest <- renderGirafe({
-    s <- eq_stats()
+  output$fl_forest <- renderGirafe({
+    m     <- input$fl_margin
+    split <- isTRUE(input$fl_split)
+    s <- summarise_change(fl_changes(), m, by_group = split)
     req(nrow(s) > 0)
-    m     <- input$eq_margin
-    split <- isTRUE(input$eq_split)
-    s     <- s %>%
-      mutate(
-        tip = paste0("<b>", metric, "</b><br/>",
-                     if (split) paste0(grp, "<br/>") else "",
-                     "Mean change: ", sprintf("%.2f", pct_mean), "%<br/>",
-                     "95% CI: ", sprintf("%.2f", lo), "% to ", sprintf("%.2f", hi), "%<br/>",
-                     "Children: ", n, "<br/>",
-                     ifelse(equivalent, "Within the margin (unchanged)",
-                            "Not shown to be unchanged")),
-        metric = factor(metric, levels = rev(metric_levels))
-      )
+    s <- s %>%
+      mutate(tip = paste0("<b>", measure, "</b><br/>",
+                          if (split) paste0(grp, "<br/>") else "",
+                          "Average change: ", sprintf("%.2f", pct_mean), "%<br/>",
+                          "95% interval: ", sprintf("%.2f", lo), "% to ", sprintf("%.2f", hi), "%<br/>",
+                          "Children: ", n, "<br/>",
+                          ifelse(unchanged, "Unchanged (inside the margin)", "Changed")),
+             measure = factor(measure, levels = rev(summary_measure_names)))
     x_lim <- max(m, abs(s$lo), abs(s$hi), na.rm = TRUE) * 1.15
     
-    p <- ggplot(s, aes(x = pct_mean, y = metric, xmin = lo, xmax = hi, color = grp)) +
-      annotate("rect", xmin = -m, xmax = m, ymin = -Inf, ymax = Inf,
-               fill = "grey85", alpha = 0.8) +
+    p <- ggplot(s, aes(x = pct_mean, y = measure, xmin = lo, xmax = hi, color = grp)) +
+      annotate("rect", xmin = -m, xmax = m, ymin = -Inf, ymax = Inf, fill = "#2B7BBA", alpha = 0.12) +
       geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
-      geom_pointrange_interactive(aes(tooltip = tip, data_id = paste(metric, grp)),
+      geom_pointrange_interactive(aes(tooltip = tip, data_id = paste(measure, grp)),
                                   position = position_dodge(width = 0.6),
                                   linewidth = 0.9, size = 0.8) +
       scale_color_manual(values = c(group_colors, "All selected groups" = "grey20")) +
+      scale_y_discrete(labels = scales::label_wrap(18)) +
       coord_cartesian(xlim = c(-x_lim, x_lim)) +
-      labs(x = "Mean % change after winsorizing (95% CI)", y = NULL,
-           caption = paste0("Shaded band = equivalence margin (\u00b1", m, "%)")) +
-      plot_theme_bw() +
-      theme(legend.position = if (split) "top" else "none",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px))
-    
-    girafe(
-      ggobj = p,
-      width_svg = 7,
-      height_svg = 6,
-      options = list(
-        opts_hover(css = "stroke-width:3px;"),
-        opts_hover_inv(css = "opacity:0.3;"),
-        opts_tooltip(css = "background:white;color:black;border:1px solid #666;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;border-radius:4px;"),
-        opts_toolbar(saveaspng = FALSE),
-        opts_sizing(rescale = TRUE)
-      )
-    )
+      labs(x = "Average % change after cleaning (95% interval)", y = NULL,
+           caption = paste0("Blue band = negligible change (\u00b1", m, "%)")) +
+      theme_dashboard() +
+      (if (split) legend_top(2) else theme())
+    make_girafe(p, 7, 6, fade = 0.3)
   })
   
-  # ---- Short answer (plain-language verdict, all selected children combined) --
-  eq_verdict_stats <- reactive({
-    eq_summary(eq_data(), margin = input$eq_margin, by_group = FALSE)
-  })
-  
-  output$eq_verdict <- renderUI({
-    s <- eq_verdict_stats()
-    validate(need(nrow(s) > 0, "Select at least one group to see the answer."))
-    m     <- input$eq_margin
-    n_ok  <- sum(s$equivalent)
-    n_all <- nrow(s)
-    
-    headline <- if (n_ok == n_all) {
-      sprintf("All %d measures are essentially unchanged by winsorizing at %s mg/dL.",
-              n_all, input$w_floor)
-    } else if (n_ok == 0) {
-      sprintf("None of the %d measures can be called unchanged after winsorizing at %s mg/dL.",
-              n_all, input$w_floor)
-    } else {
-      sprintf("%d of %d measures are essentially unchanged by winsorizing at %s mg/dL.",
-              n_ok, n_all, input$w_floor)
-    }
-    
-    flagged <- s[!s$equivalent, ]
-    detail <- if (nrow(flagged) == 0) NULL else {
-      div(class = "intro-text",
-          paste0("Not shown unchanged: ",
-                 paste0(as.character(flagged$metric), " (", sprintf("%+.1f", flagged$pct_mean), "%)",
-                        collapse = "; "), "."))
-    }
-    
-    badges <- lapply(seq_len(nrow(s)), function(i) {
-      ok <- s$equivalent[i]
-      span(
-        paste0(if (ok) "\u2714 " else "\u26A0 ",
-               as.character(s$metric[i]), ": ", sprintf("%+.1f%%", s$pct_mean[i])),
-        style = paste0("display:inline-block; padding:6px 12px; border-radius:6px; ",
-                       "font-weight:bold; background:", if (ok) "#2E9E5B" else "#F2B134", ";",
-                       "color:", if (ok) "white" else "#333", ";")
-      )
-    })
-    
-    tagList(
-      div(style = "font-size:22px; font-weight:bold; margin-bottom:8px;", headline),
-      detail,
-      div(style = "display:flex; flex-wrap:wrap; gap:10px; margin:12px 0;", badges),
-      div(class = "text-muted",
-          sprintf("All selected children combined; margin \u00b1%s%%.", m))
-    )
-  })
-  
-  # ---- Child by child: original vs. winsorized -------------------------------
-  output$eq_scatter <- renderGirafe({
-    d <- eq_data()
+  output$fl_scatter <- renderGirafe({
+    d <- fl_changes()
     req(nrow(d) > 0)
-    m <- input$eq_margin
+    m <- input$fl_margin
     
-    # Per-measure agreement (Lin's CCC) and share of children changing more than the margin
     st <- d %>%
-      group_by(metric) %>%
-      summarise(ccc      = lin_ccc(raw, wins),
-                pct_over = 100 * mean(abs(pct) > m),
-                lo       = min(raw, wins),
-                hi       = max(raw, wins),
-                .groups = "drop") %>%
-      arrange(metric) %>%
-      mutate(metric_lab = paste0(metric, "\nCCC ", sprintf("%.3f", ccc), " \u00b7 ",
-                                 sprintf("%.0f", pct_over), "% > ", m, "%"))
-    lab_levels <- st$metric_lab
+      group_by(measure) %>%
+      summarise(pct_over = 100 * mean(abs(pct) > m),
+                lo = min(original, cleaned), hi = max(original, cleaned), .groups = "drop") %>%
+      arrange(measure) %>%
+      mutate(panel = paste0(measure, "\n", sprintf("%.0f", pct_over), "% of children change by more than ", m, "%"))
+    panel_levels <- st$panel
     
     d <- d %>%
-      left_join(st %>% select(metric, metric_lab), by = "metric") %>%
-      mutate(metric_lab = factor(metric_lab, levels = lab_levels),
-             tip = paste0("<b>", participant_id, "</b><br/>",
-                          group, "<br/>",
-                          metric, "<br/>",
-                          "Original: ", sprintf("%.2f", raw), "<br/>",
-                          "After winsorizing: ", sprintf("%.2f", wins), "<br/>",
+      left_join(st %>% select(measure, panel), by = "measure") %>%
+      mutate(panel = factor(panel, levels = panel_levels),
+             tip = paste0("<b>", participant_id, "</b><br/>", group, "<br/>", measure, "<br/>",
+                          "Original: ", sprintf("%.2f", original), "<br/>",
+                          "Cleaned: ", sprintf("%.2f", cleaned), "<br/>",
                           "Change: ", sprintf("%+.1f", pct), "%"))
     
-    # Same range on both axes in every panel so the diagonal means "no change"
-    lim <- bind_rows(st %>% transmute(metric_lab = factor(metric_lab, levels = lab_levels), x = lo, y = lo),
-                     st %>% transmute(metric_lab = factor(metric_lab, levels = lab_levels), x = hi, y = hi))
+    # Same range on both axes in every panel, so the diagonal means "no change"
+    lim <- bind_rows(
+      st %>% transmute(panel = factor(panel, levels = panel_levels), x = lo, y = lo),
+      st %>% transmute(panel = factor(panel, levels = panel_levels), x = hi, y = hi))
     
-    p <- ggplot(d, aes(x = raw, y = wins)) +
+    p <- ggplot(d, aes(x = original, y = cleaned)) +
       geom_blank(data = lim, aes(x = x, y = y), inherit.aes = FALSE) +
       geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
       geom_point_interactive(aes(color = group, tooltip = tip, data_id = participant_id),
-                             alpha = 0.85, size = box_point_size) +
-      facet_wrap(~ metric_lab, scales = "free", ncol = 2) +
+                             alpha = 0.85, size = 3) +
+      facet_wrap(~ panel, scales = "free", ncol = 2) +
       scale_color_manual(values = group_colors) +
-      labs(x = "Original value", y = "After winsorizing") +
-      plot_theme_bw() +
-      theme(legend.position = "top",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px)) +
-      guides(color = guide_legend(nrow = 2))
-    
-    girafe(
-      ggobj = p,
-      width_svg = 7,
-      height_svg = 6,
-      options = list(
-        opts_hover(css = "stroke:black;stroke-width:2px;fill-opacity:1;stroke-opacity:1;"),
-        opts_hover_inv(css = "opacity:0.12;"),
-        opts_tooltip(css = "background:white;color:black;border:1px solid #666;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;border-radius:4px;"),
-        opts_toolbar(saveaspng = FALSE),
-        opts_sizing(rescale = TRUE)
-      )
-    )
+      labs(x = "Original value", y = "Value after cleaning") +
+      theme_dashboard() + legend_top(2) +
+      theme(strip.text = element_text(size = base_font_px - 2, face = "bold"))
+    make_girafe(p, 7, 6, fade = 0.12)
   })
   
   # ===========================================================================
-  # TAB 2: Glucotypes (PCA + k-means)   (added)
+  # Tab 5a: Compare groups (mixed-effects model)
   # ===========================================================================
   
-  # Selected fit (raw or winsorized readings, depending on the switch)
-  pc_sel <- reactive({
-    req(input$pc_var, input$pc_k)
-    if (isTRUE(input$pc_wins)) {
-      fl    <- as.numeric(input$pc_floor)
-      feats <- withProgress(pc_get(fl), message = "Recalculating measures...")
-    } else {
-      feats <- pc_get(NULL)
+  # Fits on click (and once on first view). Child x day x period averages keep it fast.
+  md_model <- eventReactive(input$md_fit, {
+    validate(need(length(input$md_terms) > 0, "Choose at least one factor, then select Fit model."))
+    chosen <- input$md_terms
+    if ("grp_night" %in% chosen) chosen <- union(chosen, c("group", "night"))
+    
+    term_map <- c(group = "group", night = "night", weekend = "weekend",
+                  day_num = "day_num", age = "age", bmi = "bmi", sex = "sex")
+    rhs <- unname(term_map[intersect(names(term_map), chosen)])
+    if ("grp_night" %in% input$md_terms) rhs <- c(rhs, "group:night")
+    f <- as.formula(paste(input$md_outcome, "~", paste(rhs, collapse = " + ")))
+    use_ar <- isTRUE(input$md_ar)
+    
+    fit <- withProgress(message = "Fitting model...", value = 0.3, {
+      tryCatch(
+        if (use_ar) {
+          # Random intercept per child + correlation between neighboring periods
+          nlme::lme(f, random = ~ 1 | participant_id,
+                    correlation = nlme::corAR1(form = ~ time_idx | participant_id),
+                    data = model_table, method = "REML")
+        } else {
+          nlme::lme(f, random = ~ 1 | participant_id, data = model_table, method = "REML")
+        },
+        error = function(e) e)
+    })
+    if (inherits(fit, "error")) {
+      validate(paste("The model could not be fit:", conditionMessage(fit)))
     }
-    pc_fit(feats, input$pc_var, input$pc_k)
-  })
+    fit$call$fixed <- f
+    list(fit = fit, ar = use_ar, outcome = input$md_outcome)
+  }, ignoreNULL = FALSE)
   
-  # Same settings on the raw readings (used to see who changes cluster)
-  pc_raw <- reactive({
-    req(input$pc_var, input$pc_k)
-    pc_fit(pc_get(NULL), input$pc_var, input$pc_k)
-  })
-  
-  # Shared ggiraph options (same look as the earlier plots)
-  pc_girafe <- function(p, w, h) {
-    girafe(
-      ggobj = p,
-      width_svg = w,
-      height_svg = h,
-      options = list(
-        opts_hover(css = "stroke:black;stroke-width:2px;fill-opacity:1;stroke-opacity:1;"),
-        opts_hover_inv(css = "opacity:0.25;"),
-        opts_tooltip(css = pc_tip_css),
-        opts_toolbar(saveaspng = FALSE),
-        opts_sizing(rescale = TRUE)
-      )
-    )
-  }
-  
-  # Size of in-plot text labels, matched to the axis text
-  lab_size <- body_size_px / ggplot2::.pt * 0.85
-  
-  # ---- Caption above the PCA map --------------------------------------------
-  output$pc_caption <- renderUI({
-    f <- pc_sel()
-    div(class = "intro-text", style = "margin-bottom:10px;",
-        sprintf("PCA squeezes ten glucose measures into two summary patterns: %s (left to right) and %s (bottom to top). Each dot is one child, and dots close together have similar glucose patterns. Color is the glucotype the computer found. Shape is the child's true group. Where colors overlap, children sit between glucotypes. Grouping uses %d component%s; the map shows the first two.",
-                tolower(f$lab1), tolower(f$lab2), f$ncomp, ifelse(f$ncomp == 1, "", "s")))
-  })
-  
-  # ---- 1. Glucotype map -------------------------------------------------------
-  output$pc_map <- renderGirafe({
-    f <- pc_sel()
-    d <- f$data %>%
-      mutate(tip = paste0("<b>", participant_id, "</b><br/>",
-                          "Group: ", group, "<br/>",
-                          "Glucotype: ", cluster, "<br/>",
-                          "Age: ", age, " years<br/>",
-                          "Body Mass Index: ", bmi, "<br/>",
-                          "Mean glucose: ", round(mean_glu), " mg/dL"))
-    cols <- setNames(cluster_colors[seq_len(f$k)], levels(d$cluster))
+  output$md_summary <- renderUI({
+    m   <- md_model()
+    vc  <- nlme::VarCorr(m$fit)
+    sds <- suppressWarnings(as.numeric(vc[, "StdDev"]))
+    phi <- if (m$ar) as.numeric(coef(m$fit$modelStruct$corStruct, unconstrained = FALSE)) else NA_real_
+    out_lab <- names(model_outcomes)[model_outcomes == m$outcome]
+    badge <- function(txt) span(class = "badge-pill badge-info", txt)
     
-    p <- ggplot(d, aes(x = pc1, y = pc2)) +
-      geom_hline(yintercept = 0, color = "grey85") +
-      geom_vline(xintercept = 0, color = "grey85") +
-      geom_point_interactive(aes(color = cluster, shape = group,
-                                 data_id = participant_id, tooltip = tip),
-                             alpha = 0.85, size = box_point_size) +
-      scale_color_manual(values = cols,
-                         labels = setNames(f$prof$name, as.character(f$prof$cluster))) +
-      scale_shape_manual(values = group_shapes) +
-      labs(x = f$axis_x, y = f$axis_y) +
-      plot_theme_bw() +
-      theme(legend.position = "top",
-            legend.box      = "vertical",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px))
-    
-    girafe(
-      ggobj = p,
-      width_svg = 12,
-      height_svg = 6.5,
-      options = list(
-        opts_hover(css = "stroke:black;stroke-width:2px;fill-opacity:1;stroke-opacity:1;"),
-        opts_hover_inv(css = "opacity:0.12;"),
-        opts_tooltip(css = pc_tip_css),
-        opts_toolbar(saveaspng = FALSE),
-        opts_sizing(rescale = TRUE)
-      )
+    tagList(
+      p(sprintf("The model compares %s using %s averages from %d children (each child has one day average and one night average for 14 days). Each child gets a personal baseline%s.",
+                tolower(out_lab), format(nrow(model_table), big.mark = ","),
+                n_distinct(model_table$participant_id),
+                if (m$ar) ", and the model accounts for neighboring periods resembling each other" else "")),
+      if (!m$ar) div(class = "text-danger",
+                     "Warning: this version ignores that readings from one child resemble each other. Its intervals are too narrow and its results look more certain than they are."),
+      div(class = "badge-row",
+          badge(sprintf("Differences between children (SD): %.1f", sds[1])),
+          badge(sprintf("Differences within a child (SD): %.1f", sds[2])),
+          if (m$ar) badge(sprintf("Similarity of neighboring periods: %.2f", phi)))
     )
   })
   
-  # Does winsorizing change who lands in which glucotype?
-  output$pc_switch_text <- renderText({
-    if (!isTRUE(input$pc_wins)) {
-      return("Turn on \"Use winsorized readings\" in the settings to see whether replacing false lows changes which glucotype each child lands in.")
-    }
-    a  <- pc_raw()$data
-    b  <- pc_sel()$data
-    ch <- sum(as.character(a$cluster) != as.character(b$cluster))
-    sprintf("After winsorizing at %s mg/dL, %d of %d children (%.0f%%) land in a different glucotype than with the raw readings (matched by average glucose level).",
-            input$pc_floor, ch, nrow(a), 100 * ch / nrow(a))
+  output$md_forest <- renderGirafe({
+    m  <- md_model()
+    tt <- summary(m$fit)$tTable
+    d <- tibble(term = rownames(tt), est = tt[, "Value"], se = tt[, "Std.Error"],
+                dfr = tt[, "DF"], pval = tt[, "p-value"]) %>%
+      filter(term != "(Intercept)") %>%
+      mutate(label = clean_term_label(term),
+             crit  = qt(0.975, dfr),
+             lo    = est - crit * se,
+             hi    = est + crit * se,
+             real  = lo > 0 | hi < 0,
+             tip   = paste0("<b>", label, "</b><br/>Estimate: ", sprintf("%.2f", est), "<br/>",
+                            "95% interval: ", sprintf("%.2f", lo), " to ", sprintf("%.2f", hi), "<br/>",
+                            "p = ", format.pval(pval, digits = 2, eps = 0.001)))
+    d$label <- factor(d$label, levels = rev(d$label))
+    
+    p <- ggplot(d, aes(x = est, y = label, xmin = lo, xmax = hi, color = real)) +
+      geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+      geom_pointrange_interactive(aes(tooltip = tip, data_id = label), linewidth = 0.9, size = 0.8) +
+      scale_color_manual(values = c("TRUE" = navy, "FALSE" = "grey60")) +
+      scale_y_discrete(labels = scales::label_wrap(22)) +
+      labs(x = "Estimated difference (95% interval)", y = NULL) +
+      theme_dashboard()
+    make_girafe(p, 7, 5.5, fade = 0.3)
   })
   
-  # ---- 2. Who is in each cluster --------------------------------------------
-  output$pc_comp_plot <- renderGirafe({
-    f    <- pc_sel()
-    prof <- f$prof
-    comp <- f$data %>%
-      count(cluster, group) %>%
-      group_by(cluster) %>%
-      mutate(pct = 100 * n / sum(n)) %>%
-      ungroup() %>%
-      mutate(tip = paste0("<b>", cluster, "</b><br/>", group, "<br/>",
-                          sprintf("%.0f", pct), "% of the glucotype (", n, " children)"),
-             lab = ifelse(pct >= 8, paste0(round(pct), "%"), ""))
-    x_labs <- pc_xlabs(prof)
-    
-    p <- ggplot(comp, aes(x = cluster, y = pct, fill = group)) +
-      geom_col_interactive(aes(tooltip = tip, data_id = paste(cluster, group)),
-                           width = 0.7, color = "white") +
-      geom_text(aes(label = lab), position = position_stack(vjust = 0.5),
-                color = "white", fontface = "bold", size = lab_size, family = plot_font) +
-      scale_fill_manual(values = group_colors) +
-      scale_x_discrete(labels = x_labs) +
-      scale_y_continuous(limits = c(0, 100)) +
-      labs(x = NULL, y = "% of children in the glucotype") +
-      plot_theme_bw() +
-      theme(legend.position = "top",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px)) +
-      guides(fill = guide_legend(nrow = 2))
-    
-    pc_girafe(p, 7, 6.5)
+  # 24-hour curve per group: generalized additive model with a cyclic smooth
+  # (hour 0 joins hour 24) and a random intercept per child. Fit once, on demand.
+  gam_curves <- reactive({
+    withProgress(message = "Fitting 24-hour curves...", {
+      hourly <- readings %>%
+        group_by(participant_id, group, hour) %>%
+        summarise(glu = mean(glucose), .groups = "drop") %>%
+        mutate(hour = hour + 0.5, participant_id = factor(participant_id)) %>%
+        as.data.frame()
+      fit <- mgcv::gam(glu ~ group + s(hour, by = group, bs = "cc", k = 8) + s(participant_id, bs = "re"),
+                       data = hourly, method = "REML", knots = list(hour = c(0, 24)))
+      new <- expand.grid(hour = seq(0, 24, length.out = 97),
+                         group = factor(group_levels, levels = group_levels))
+      new$participant_id <- hourly$participant_id[1]
+      pr <- predict(fit, new, se.fit = TRUE, exclude = "s(participant_id)")
+      new$fit <- as.numeric(pr$fit)
+      new$lo  <- new$fit - 1.96 * as.numeric(pr$se.fit)
+      new$hi  <- new$fit + 1.96 * as.numeric(pr$se.fit)
+      new
+    })
   })
   
-  output$pc_comp_text <- renderText({
-    sprintf("%.0f%% of children landed in the glucotype dominated by their own group.",
-            100 * pc_purity(pc_sel()$data))
-  })
-  
-  # ---- 4. Time in ranges ----------------------------------------------------
-  output$pc_range_plot <- renderGirafe({
-    f    <- pc_sel()
-    prof <- f$prof
-    r <- f$data %>%
-      group_by(cluster) %>%
-      summarise(`Hypoglycemia`         = mean(pct_low),
-                `In range`             = mean(pct_inr),
-                `Hyperglycemia`        = mean(pct_high),
-                `Severe hyperglycemia` = mean(pct_sev),
-                .groups = "drop")
-    long <- bind_rows(lapply(range_levels, function(l) {
-      tibble(cluster = r$cluster, range = l, pct = r[[l]])
-    })) %>%
-      mutate(range = factor(range, levels = rev(range_levels)),
-             tip   = paste0("<b>", cluster, "</b><br/>", range, ": ", sprintf("%.1f", pct), "%"),
-             lab   = ifelse(pct >= 4, paste0(round(pct), "%"), ""))
-    x_labs <- pc_xlabs(prof)
-    
-    p <- ggplot(long, aes(x = cluster, y = pct, fill = range)) +
-      geom_col_interactive(aes(tooltip = tip, data_id = paste(cluster, range)),
-                           width = 0.7, color = "white") +
-      geom_text(aes(label = lab, group = range), position = position_stack(vjust = 0.5),
-                color = "white", fontface = "bold", size = lab_size, family = plot_font) +
-      scale_fill_manual(values = range_colors, breaks = range_levels, drop = FALSE) +
-      scale_x_discrete(labels = x_labs) +
-      scale_y_continuous(limits = c(0, 100)) +
-      labs(x = NULL, y = "Average % of time") +
-      plot_theme_bw() +
-      theme(legend.position = "top",
-            legend.title    = element_blank(),
-            legend.text     = element_text(size = body_size_px)) +
-      guides(fill = guide_legend(nrow = 2))
-    
-    pc_girafe(p, 7, 6.5)
-  })
-  
-  # ---- 5. Typical day per cluster -------------------------------------------
-  output$pc_day_plot <- renderGirafe({
-    f    <- pc_sel()
-    prof <- f$prof
-    feats <- if (isTRUE(input$pc_wins)) pc_get(as.numeric(input$pc_floor)) else pc_get(NULL)
-    
-    hr <- feats$hourly %>%
-      left_join(f$data %>% select(participant_id, cluster), by = "participant_id") %>%
-      group_by(cluster, hour) %>%
-      summarise(med = median(glu),
-                lo  = quantile(glu, 0.10),
-                hi  = quantile(glu, 0.90),
-                .groups = "drop") %>%
-      left_join(prof %>% select(cluster, name), by = "cluster") %>%
-      mutate(name = factor(name, levels = prof$name),
-             hlab = ifelse(hour == 0, "12 AM",
-                           ifelse(hour < 12, paste0(hour, " AM"),
-                                  ifelse(hour == 12, "12 PM", paste0(hour - 12, " PM")))),
-             tip  = paste0("<b>", name, "</b><br/>", hlab, "<br/>",
-                           "Median: ", sprintf("%.0f", med), " mg/dL<br/>",
-                           "Most children: ", sprintf("%.0f", lo), " to ",
-                           sprintf("%.0f", hi), " mg/dL"))
-    cols <- setNames(cluster_colors[seq_len(f$k)], levels(hr$cluster))
-    
-    p <- ggplot(hr, aes(x = hour)) +
+  output$md_gam <- renderPlot({
+    ggplot(gam_curves(), aes(x = hour, y = fit, color = group, fill = group)) +
       geom_hline(yintercept = c(70, 140), linetype = "dashed", color = "grey60") +
-      geom_ribbon(aes(ymin = lo, ymax = hi, fill = cluster, group = cluster), alpha = 0.25) +
-      geom_line(aes(y = med, color = cluster, group = cluster), linewidth = 1.1) +
-      geom_point_interactive(aes(y = med, color = cluster, tooltip = tip,
-                                 data_id = paste(cluster, hour)), size = 2.5) +
-      facet_wrap(~ name, nrow = 1, labeller = label_wrap_gen(24)) +
-      scale_color_manual(values = cols) +
-      scale_fill_manual(values = cols) +
-      scale_x_continuous(breaks = c(0, 6, 12, 18),
-                         labels = c("12 AM", "6 AM", "12 PM", "6 PM")) +
-      labs(x = "Time of day", y = "Sensor glucose (mg/dL)") +
-      plot_theme_bw()
+      geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, color = NA) +
+      geom_line(linewidth = 1.1) +
+      scale_color_manual(values = group_colors) +
+      scale_fill_manual(values = group_colors) +
+      scale_x_continuous(breaks = clock_breaks$breaks, labels = clock_breaks$labels) +
+      labs(x = "Time of day", y = "Average glucose (mg/dL)") +
+      theme_dashboard() + legend_top(2)
+  })
+  
+  output$md_text <- renderPrint(summary(md_model()$fit))
+  
+  # ===========================================================================
+  # Tab 5b: Forecast glucose
+  # ===========================================================================
+  
+  fc_floor_val <- reactive(if (isTRUE(input$fc_clean)) input$fc_floor else NULL)
+  fc_horizon   <- reactive(as.integer(input$fc_h))
+  
+  fc_preds <- reactive({
+    req(input$fc_pid, input$fc_h)
+    run_forecast(all_traces[[input$fc_pid]], fc_horizon(), fc_floor_val())
+  })
+  
+  output$fc_trace <- renderPlot({
+    p  <- fc_preds()
+    dd <- as.integer(input$fc_day)
+    p  <- p[p$day == dd, ]
+    validate(need(nrow(p) > 0, "No forecasts exist for this day."))
     
-    pc_girafe(p, 12, 5.5)
+    all_names <- c("Actual", unname(forecast_methods))
+    lines <- bind_rows(
+      tibble(xh = p$xh, pred = p$actual, method = "Actual"),
+      forecasts_long(p) %>% select(xh, pred, method)
+    ) %>% mutate(method = factor(method, levels = all_names))
+    
+    ggplot() +
+      geom_hline(yintercept = c(70, 140), linetype = "dashed", color = "grey60") +
+      geom_ribbon(data = p, aes(x = xh, ymin = ar - 1.96 * sigma, ymax = ar + 1.96 * sigma),
+                  fill = forecast_colors[["Regression model"]], alpha = 0.15) +
+      geom_line(data = lines, aes(x = xh, y = pred, color = method, linewidth = method == "Actual")) +
+      scale_color_manual(values = forecast_colors, breaks = all_names) +
+      scale_linewidth_manual(values = c("TRUE" = 1.2, "FALSE" = 0.8), guide = "none") +
+      scale_x_continuous(breaks = clock_breaks$breaks, labels = clock_breaks$labels) +
+      coord_cartesian(xlim = c(0, 24), ylim = c(40, 250)) +
+      labs(x = paste0("Time of day (day ", dd, ")"), y = "Sensor glucose (mg/dL)") +
+      theme_dashboard() + legend_top(1) +
+      guides(color = guide_legend(override.aes = list(linewidth = 2)))
+  })
+  
+  output$fc_table <- renderTable(forecast_accuracy(forecasts_long(fc_preds())),
+                                 digits = 1, striped = TRUE, bordered = TRUE, width = "100%")
+  
+  output$fc_roc <- renderPlot({
+    p <- fc_preds()
+    y <- p$actual <= 70
+    validate(need(sum(y) >= 5 && sum(!y) >= 5,
+                  "This child has too few low readings in the test days to draw a warning curve."))
+    curves <- lapply(names(forecast_methods), function(m) roc_curve(-p[[m]], y))
+    labels <- vapply(seq_along(curves), function(i)
+      sprintf("%s (AUC %.2f)", forecast_methods[[i]], curves[[i]]$auc), character(1))
+    df <- bind_rows(lapply(seq_along(curves), function(i) mutate(curves[[i]]$df, method = labels[i]))) %>%
+      mutate(method = factor(method, levels = labels))
+    
+    ggplot(df, aes(x = fpr, y = tpr, color = method)) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+      geom_line(linewidth = 1.1) +
+      scale_color_manual(values = setNames(unname(forecast_colors[unname(forecast_methods)]), labels)) +
+      coord_equal() +
+      labs(x = "False alarm rate", y = "Lows caught") +
+      theme_dashboard() + legend_top(3)
+  })
+  
+  # All 100 children (runs only when the button is clicked)
+  fc_all_results <- eventReactive(input$fc_all, {
+    h   <- fc_horizon()
+    fl  <- fc_floor_val()
+    ids <- names(all_traces)
+    res <- withProgress(message = "Forecasting all 100 children...", value = 0, {
+      bind_rows(lapply(ids, function(pid) {
+        incProgress(1 / length(ids))
+        p <- run_forecast(all_traces[[pid]], h, fl)
+        tibble(participant_id = pid,
+               rmse_persist = sqrt(mean((p$persist - p$actual)^2)),
+               rmse_ar      = sqrt(mean((p$ar - p$actual)^2)))
+      }))
+    })
+    res %>%
+      left_join(participants %>% select(participant_id, group), by = "participant_id") %>%
+      mutate(minutes = h * 5)
+  })
+  
+  output$fc_all_text <- renderText({
+    r <- fc_all_results()
+    sprintf("At %d minutes ahead, the regression model made smaller errors than repeating the latest reading for %d of %d children (median error reduction: %.0f%%).",
+            r$minutes[1], sum(r$rmse_ar < r$rmse_persist), nrow(r),
+            median(100 * (1 - r$rmse_ar / r$rmse_persist)))
+  })
+  
+  output$fc_all_plot <- renderGirafe({
+    r <- fc_all_results() %>%
+      mutate(tip = paste0("<b>", participant_id, "</b><br/>", group, "<br/>",
+                          "Repeat-latest error: ", sprintf("%.1f", rmse_persist), " mg/dL<br/>",
+                          "Regression error: ", sprintf("%.1f", rmse_ar), " mg/dL"))
+    lim <- range(c(r$rmse_persist, r$rmse_ar))
+    
+    p <- ggplot(r, aes(x = rmse_persist, y = rmse_ar)) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
+      geom_point_interactive(aes(color = group, tooltip = tip, data_id = participant_id),
+                             alpha = 0.85, size = 3) +
+      scale_color_manual(values = group_colors) +
+      coord_equal(xlim = lim, ylim = lim) +
+      labs(x = "Typical error, repeat latest reading (mg/dL)",
+           y = "Typical error, regression model (mg/dL)") +
+      theme_dashboard() + legend_top(2)
+    make_girafe(p, 7, 6, fade = 0.15)
   })
 }
 
