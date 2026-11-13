@@ -14,4 +14,10 @@ listing:
       image: images/CGM.jpeg
       path: https://sevanesaian.shinyapps.io/cgm-explorer/
       categories: [Shiny, CGM, Biomedical Devices, Data Quality Control, Repeated Measures]
+
+    - title: "Clinical Trials: Power & Sample Size Calculator"
+      description: "An interactive tool for planning clinical trials, estimating statistical power and required sample sizes across common study designs, effect sizes, and significance levels."
+      image: images/clinicaltrials.jpeg
+      path: https://sevanesaian.shinyapps.io/power-calculator/
+      categories: [Shiny, Clinical Trials, Power Analysis, Sample Size, Study Design]
 ---

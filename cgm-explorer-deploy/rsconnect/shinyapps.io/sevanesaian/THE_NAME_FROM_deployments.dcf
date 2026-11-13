@@ -1,0 +1,10 @@
+name: THE_NAME_FROM_deployments
+title:
+username: sevanesaian
+account: sevanesaian
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18413417
+bundleId: 12805197
+url: https://sevanesaian.shinyapps.io/THE_NAME_FROM_deployments/
+version: 1
